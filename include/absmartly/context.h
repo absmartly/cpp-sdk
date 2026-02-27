@@ -3,6 +3,7 @@
 #include <absmartly/models.h>
 #include <absmartly/context_config.h>
 #include <absmartly/context_event_handler.h>
+#include <absmartly/context_event_publisher.h>
 #include <absmartly/audience_matcher.h>
 #include <absmartly/variant_assigner.h>
 #include <absmartly/hashing.h>
@@ -14,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <chrono>
+#include <future>
 
 namespace absmartly {
 
@@ -44,7 +46,14 @@ struct ExperimentIndex {
 class Context {
 public:
     Context(const ContextConfig& config, ContextData data,
-            std::shared_ptr<ContextEventHandler> event_handler = nullptr);
+            std::shared_ptr<ContextEventHandler> event_handler = nullptr,
+            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr);
+
+    Context(const ContextConfig& config, std::future<ContextData> data_future,
+            std::shared_ptr<ContextEventHandler> event_handler = nullptr,
+            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr);
+
+    void wait_until_ready();
 
     bool is_ready() const;
     bool is_failed() const;
@@ -102,8 +111,11 @@ private:
     std::string unit_hash(const std::string& unit_type);
 
     void check_not_finalized() const;
+    void check_ready() const;
 
     void emit_event(const std::string& type, const nlohmann::json& data = nlohmann::json());
+    void setup_from_config();
+    void become_ready(ContextData data);
 
     ContextConfig config_;
     ContextData data_;
@@ -132,6 +144,9 @@ private:
     std::map<std::string, VariantAssigner> assigners_;
 
     std::shared_ptr<ContextEventHandler> event_handler_;
+    std::shared_ptr<ContextEventPublisher> event_publisher_;
+
+    std::future<ContextData> data_future_;
 
     AudienceMatcher audience_matcher_;
 };

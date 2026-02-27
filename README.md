@@ -57,7 +57,49 @@ Please follow the [installation](#installation) instructions before trying the f
 
 This example assumes an Api Key, an Application, and an Environment have been created in the A/B Smartly web console.
 
-#### Recommended: Direct Construction
+#### Recommended: Using the SDK Wrapper
+
+The SDK wrapper manages HTTP communication, context data fetching, and event publishing automatically. This requires libcurl or a custom `HTTPClient` implementation.
+
+```cpp
+#include <absmartly/sdk.h>
+#include <absmartly/client.h>
+#include <absmartly/client_config.h>
+#include <absmartly/sdk_config.h>
+#include <absmartly/default_http_client.h>
+
+int main() {
+    absmartly::ClientConfig client_config;
+    client_config.endpoint = "https://your-company.absmartly.io";
+    client_config.api_key = "YOUR_API_KEY";
+    client_config.application = "website";
+    client_config.environment = "production";
+
+    auto http_client = std::make_shared<absmartly::DefaultHTTPClient>();
+    auto client = std::make_shared<absmartly::Client>(client_config, http_client);
+
+    absmartly::SDKConfig sdk_config;
+    sdk_config.client = client;
+
+    auto sdk = absmartly::SDK::create(sdk_config);
+
+    absmartly::ContextConfig ctx_config;
+    ctx_config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
+
+    // Async context creation (fetches data from API)
+    auto context = sdk->create_context(ctx_config);
+    context->wait_until_ready();
+
+    // Or with pre-fetched data
+    auto data_future = sdk->get_context_data();
+    auto data = data_future.get();
+    auto context2 = sdk->create_context_with(ctx_config, data);
+
+    return 0;
+}
+```
+
+#### Direct Construction (without SDK wrapper)
 
 ```cpp
 #include <absmartly/context.h>
@@ -66,8 +108,6 @@ This example assumes an Api Key, an Application, and an Environment have been cr
 #include <nlohmann/json.hpp>
 
 int main() {
-    // Fetch context data from the A/B Smartly collector API
-    // (HTTP request to https://your-company.absmartly.io/v1/context)
     std::string json_response = fetch_context_data(); // your HTTP client
 
     absmartly::ContextData data = nlohmann::json::parse(json_response)
@@ -78,7 +118,6 @@ int main() {
 
     absmartly::Context context(config, data);
 
-    // context is ready to use
     return 0;
 }
 ```
@@ -137,9 +176,22 @@ absmartly::Context context(config, data, event_handler);
 
 ## Creating a New Context
 
-### Synchronously
+### Using the SDK Wrapper (Recommended)
 
-The C++ SDK creates contexts synchronously. You provide the context data obtained from your HTTP call to the A/B Smartly collector:
+```cpp
+auto sdk = absmartly::SDK::create(sdk_config);
+
+// Async: SDK fetches context data from the API
+auto context = sdk->create_context(ctx_config);
+context->wait_until_ready();
+
+// With pre-fetched data: context is immediately ready
+auto context2 = sdk->create_context_with(ctx_config, data);
+```
+
+### Direct Construction
+
+You provide the context data obtained from your HTTP call to the A/B Smartly collector:
 
 ```cpp
 absmartly::ContextConfig config;
@@ -162,7 +214,6 @@ config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
 
 absmartly::Context context(config, data);
 
-// Reuse the data for another context
 absmartly::ContextConfig another_config;
 another_config.units = {{"session_id", "another-session-id"}};
 

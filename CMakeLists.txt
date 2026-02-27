@@ -18,6 +18,10 @@ add_library(absmartly-sdk
   src/variant_assigner.cpp
   src/utils.cpp
   src/context.cpp
+  src/client.cpp
+  src/default_context_data_provider.cpp
+  src/default_context_event_publisher.cpp
+  src/sdk.cpp
   src/json_expr/evaluator.cpp
   src/json_expr/operators.cpp
   src/audience_matcher.cpp
@@ -29,6 +33,16 @@ target_include_directories(absmartly-sdk PUBLIC
 )
 
 target_link_libraries(absmartly-sdk PUBLIC nlohmann_json::nlohmann_json)
+
+find_package(CURL QUIET)
+if(CURL_FOUND)
+  target_sources(absmartly-sdk PRIVATE src/default_http_client.cpp)
+  target_compile_definitions(absmartly-sdk PUBLIC ABSMARTLY_HAVE_CURL)
+  target_link_libraries(absmartly-sdk PRIVATE CURL::libcurl)
+  message(STATUS "ABsmartly: CURL found, DefaultHTTPClient enabled")
+else()
+  message(STATUS "ABsmartly: CURL not found, DefaultHTTPClient disabled")
+endif()
 
 option(ABSMARTLY_BUILD_TESTS "Build tests" ON)
 if(ABSMARTLY_BUILD_TESTS)

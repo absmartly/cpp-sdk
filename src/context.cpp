@@ -20,11 +20,26 @@ static bool array_equals_shallow(const std::vector<double>& a, const std::vector
 }
 
 Context::Context(const ContextConfig& config, ContextData data,
-                 std::shared_ptr<ContextEventHandler> event_handler)
+                 std::shared_ptr<ContextEventHandler> event_handler,
+                 std::shared_ptr<ContextEventPublisher> event_publisher)
     : config_(config)
-    , data_(std::move(data))
-    , event_handler_(std::move(event_handler)) {
+    , event_handler_(std::move(event_handler))
+    , event_publisher_(std::move(event_publisher)) {
+    setup_from_config();
+    become_ready(std::move(data));
+}
 
+Context::Context(const ContextConfig& config, std::future<ContextData> data_future,
+                 std::shared_ptr<ContextEventHandler> event_handler,
+                 std::shared_ptr<ContextEventPublisher> event_publisher)
+    : config_(config)
+    , event_handler_(std::move(event_handler))
+    , event_publisher_(std::move(event_publisher))
+    , data_future_(std::move(data_future)) {
+    setup_from_config();
+}
+
+void Context::setup_from_config() {
     for (const auto& [type, uid] : config_.units) {
         units_[type] = uid;
     }
@@ -36,7 +51,10 @@ Context::Context(const ContextConfig& config, ContextData data,
     for (const auto& [name, variant] : config_.custom_assignments) {
         cassignments_[name] = variant;
     }
+}
 
+void Context::become_ready(ContextData data) {
+    data_ = std::move(data);
     init(data_);
     ready_ = true;
 
@@ -47,6 +65,26 @@ Context::Context(const ContextConfig& config, ContextData data,
     }
     ready_data["experiments"] = exps;
     emit_event("ready", ready_data);
+}
+
+void Context::wait_until_ready() {
+    if (ready_ || failed_) {
+        return;
+    }
+
+    if (!data_future_.valid()) {
+        failed_ = true;
+        emit_event("error", {{"message", "No data future available"}});
+        return;
+    }
+
+    try {
+        auto data = data_future_.get();
+        become_ready(std::move(data));
+    } catch (const std::exception& e) {
+        failed_ = true;
+        emit_event("error", {{"message", e.what()}});
+    }
 }
 
 bool Context::is_ready() const {
@@ -172,6 +210,7 @@ void Context::set_custom_assignments(const std::map<std::string, int>& assignmen
 }
 
 int Context::treatment(const std::string& experiment_name) {
+    check_ready();
     check_not_finalized();
 
     auto& assignment = get_or_create_assignment(experiment_name);
@@ -185,6 +224,7 @@ int Context::treatment(const std::string& experiment_name) {
 }
 
 int Context::peek(const std::string& experiment_name) {
+    check_ready();
     check_not_finalized();
 
     auto& assignment = get_or_create_assignment(experiment_name);
@@ -192,6 +232,7 @@ int Context::peek(const std::string& experiment_name) {
 }
 
 nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
+    check_ready();
     check_not_finalized();
 
     auto var_it = index_variables_.find(key);
@@ -220,6 +261,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
 }
 
 nlohmann::json Context::peek_variable_value(const std::string& key, const nlohmann::json& default_value) {
+    check_ready();
     check_not_finalized();
 
     auto var_it = index_variables_.find(key);
@@ -307,6 +349,7 @@ std::vector<std::string> Context::custom_field_keys() const {
 }
 
 void Context::track(const std::string& goal_name, const nlohmann::json& properties) {
+    check_ready();
     check_not_finalized();
 
     GoalAchievement goal;
@@ -708,6 +751,12 @@ void Context::check_not_finalized() const {
     }
     if (finalizing_) {
         throw ContextFinalizedException();
+    }
+}
+
+void Context::check_ready() const {
+    if (!ready_) {
+        throw ContextNotReadyException();
     }
 }
 
