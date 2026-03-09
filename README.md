@@ -57,9 +57,32 @@ Please follow the [installation](#installation) instructions before trying the f
 
 This example assumes an Api Key, an Application, and an Environment have been created in the A/B Smartly web console.
 
-#### Recommended: Using the SDK Wrapper
+#### Recommended: Simple Initialization
 
-The SDK wrapper manages HTTP communication, context data fetching, and event publishing automatically. This requires libcurl or a custom `HTTPClient` implementation.
+```cpp
+#include <absmartly/sdk.h>
+
+int main() {
+    auto sdk = absmartly::SDK::create_simple({
+        .endpoint = "https://your-company.absmartly.io/v1",
+        .api_key = "YOUR_API_KEY",
+        .application = "website",
+        .environment = "production"
+    });
+
+    absmartly::ContextConfig ctx_config;
+    ctx_config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
+
+    auto context = sdk->create_context(ctx_config);
+    context->wait_until_ready();
+
+    return 0;
+}
+```
+
+#### Alternative: Using Configuration Objects
+
+For use cases with custom HTTP clients or providers:
 
 ```cpp
 #include <absmartly/sdk.h>
@@ -139,9 +162,9 @@ config.custom_assignments = {   // pre-set custom assignments
 absmartly::Context context(config, data);
 ```
 
-#### Advanced Configuration
+#### With Event Handler
 
-For advanced use cases where you need to handle SDK events, provide a custom event handler:
+To handle SDK events, provide a custom event handler:
 
 ```cpp
 #include <absmartly/context_event_handler.h>
@@ -176,17 +199,21 @@ absmartly::Context context(config, data, event_handler);
 
 ## Creating a New Context
 
-### Using the SDK Wrapper (Recommended)
+### Asynchronously (Recommended)
 
 ```cpp
-auto sdk = absmartly::SDK::create(sdk_config);
+auto sdk = absmartly::SDK::create_simple({
+    .endpoint = "https://your-company.absmartly.io/v1",
+    .api_key = "YOUR_API_KEY",
+    .application = "website",
+    .environment = "production"
+});
 
-// Async: SDK fetches context data from the API
+absmartly::ContextConfig ctx_config;
+ctx_config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
+
 auto context = sdk->create_context(ctx_config);
 context->wait_until_ready();
-
-// With pre-fetched data: context is immediately ready
-auto context2 = sdk->create_context_with(ctx_config, data);
 ```
 
 ### Direct Construction
