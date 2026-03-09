@@ -34,15 +34,9 @@ target_include_directories(absmartly-sdk PUBLIC
 
 target_link_libraries(absmartly-sdk PUBLIC nlohmann_json::nlohmann_json)
 
-find_package(CURL QUIET)
-if(CURL_FOUND)
-  target_sources(absmartly-sdk PRIVATE src/default_http_client.cpp)
-  target_compile_definitions(absmartly-sdk PUBLIC ABSMARTLY_HAVE_CURL)
-  target_link_libraries(absmartly-sdk PRIVATE CURL::libcurl)
-  message(STATUS "ABsmartly: CURL found, DefaultHTTPClient enabled")
-else()
-  message(STATUS "ABsmartly: CURL not found, DefaultHTTPClient disabled")
-endif()
+find_package(CURL REQUIRED)
+target_sources(absmartly-sdk PRIVATE src/default_http_client.cpp src/async_http_client.cpp)
+target_link_libraries(absmartly-sdk PRIVATE CURL::libcurl)
 
 option(ABSMARTLY_BUILD_TESTS "Build tests" ON)
 if(ABSMARTLY_BUILD_TESTS)

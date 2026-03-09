@@ -55,7 +55,7 @@ public:
 
     void wait_until_ready();
 
-    bool is_ready() const;
+    bool is_ready();
     bool is_failed() const;
     bool is_finalized() const;
     bool is_finalizing() const;

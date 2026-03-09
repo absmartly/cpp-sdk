@@ -87,7 +87,18 @@ void Context::wait_until_ready() {
     }
 }
 
-bool Context::is_ready() const {
+bool Context::is_ready() {
+    if (!ready_ && !failed_ && data_future_.valid()) {
+        if (data_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            try {
+                auto data = data_future_.get();
+                become_ready(std::move(data));
+            } catch (const std::exception& e) {
+                failed_ = true;
+                emit_event("error", {{"message", e.what()}});
+            }
+        }
+    }
     return ready_;
 }
 
