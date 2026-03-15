@@ -1889,3 +1889,92 @@ TEST_CASE("custom_field_value_type returns nullopt for missing", "[context][cust
     REQUIRE_FALSE(ctx.custom_field_value_type("exp_test_custom_fields", "missing").has_value());
     REQUIRE_FALSE(ctx.custom_field_value_type("not_found", "country").has_value());
 }
+
+TEST_CASE("close is alias for finalize", "[context][aliases]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    REQUIRE_FALSE(ctx.is_closed());
+    ctx.close();
+    REQUIRE(ctx.is_closed());
+    REQUIRE(ctx.is_finalized());
+}
+
+TEST_CASE("is_closed returns same as is_finalized", "[context][aliases]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    REQUIRE(ctx.is_closed() == ctx.is_finalized());
+    ctx.finalize();
+    REQUIRE(ctx.is_closed() == ctx.is_finalized());
+}
+
+TEST_CASE("is_closing returns same as is_finalizing", "[context][aliases]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    REQUIRE(ctx.is_closing() == ctx.is_finalizing());
+}
+
+TEST_CASE("error messages use ABsmartly prefix", "[context][errors]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    ctx.finalize();
+
+    try {
+        ctx.treatment("exp_test_ab");
+        FAIL("Expected ContextFinalizedException");
+    } catch (const ContextFinalizedException& e) {
+        REQUIRE(std::string(e.what()) == "ABsmartly Context is finalized.");
+    }
+}
+
+TEST_CASE("not ready error message uses ABsmartly prefix", "[context][errors]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+
+    std::promise<ContextData> p;
+    auto f = p.get_future();
+
+    Context ctx(config, std::move(f));
+
+    try {
+        ctx.treatment("exp_test_ab");
+        FAIL("Expected ContextNotReadyException");
+    } catch (const ContextNotReadyException& e) {
+        REQUIRE(std::string(e.what()) == "ABsmartly Context is not yet ready.");
+    }
+    p.set_value(ContextData{});
+}
+
+TEST_CASE("unit UID already set error message", "[context][errors]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    ctx.set_unit("new_unit", "uid1");
+    try {
+        ctx.set_unit("new_unit", "uid2");
+        FAIL("Expected exception");
+    } catch (const std::exception& e) {
+        REQUIRE(std::string(e.what()) == "Unit 'new_unit' UID already set.");
+    }
+}
+
+TEST_CASE("unit UID blank error message", "[context][errors]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    try {
+        ctx.set_unit("new_unit", "");
+        FAIL("Expected exception");
+    } catch (const std::exception& e) {
+        REQUIRE(std::string(e.what()) == "Unit 'new_unit' UID must not be blank.");
+    }
+}

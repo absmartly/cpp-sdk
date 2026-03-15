@@ -125,6 +125,14 @@ bool Context::is_finalizing() const noexcept {
     return !finalized_ && finalizing_;
 }
 
+bool Context::is_closed() const noexcept {
+    return is_finalized();
+}
+
+bool Context::is_closing() const noexcept {
+    return is_finalizing();
+}
+
 int Context::pending() const noexcept {
     return pending_;
 }
@@ -474,6 +482,10 @@ PublishEvent Context::finalize() {
     emit_event("finalize");
 
     return result;
+}
+
+PublishEvent Context::close() {
+    return finalize();
 }
 
 void Context::refresh() {

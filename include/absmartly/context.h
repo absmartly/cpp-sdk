@@ -62,6 +62,8 @@ public:
     bool is_failed() const noexcept;
     bool is_finalized() const noexcept;
     bool is_finalizing() const noexcept;
+    bool is_closed() const noexcept;
+    bool is_closing() const noexcept;
     int pending() const noexcept;
     std::string ready_error() const noexcept;
 
@@ -100,6 +102,7 @@ public:
     PublishEvent publish();
 
     PublishEvent finalize();
+    PublishEvent close();
 
     void refresh();
     void refresh(const ContextData& new_data);
