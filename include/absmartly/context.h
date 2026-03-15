@@ -2,6 +2,7 @@
 
 #include <absmartly/models.h>
 #include <absmartly/context_config.h>
+#include <absmartly/context_data_provider.h>
 #include <absmartly/context_event_handler.h>
 #include <absmartly/context_event_publisher.h>
 #include <absmartly/audience_matcher.h>
@@ -47,22 +48,25 @@ class Context {
 public:
     Context(const ContextConfig& config, ContextData data,
             std::shared_ptr<ContextEventHandler> event_handler = nullptr,
-            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr);
+            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr,
+            std::shared_ptr<ContextDataProvider> data_provider = nullptr);
 
     Context(const ContextConfig& config, std::future<ContextData> data_future,
             std::shared_ptr<ContextEventHandler> event_handler = nullptr,
-            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr);
+            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr,
+            std::shared_ptr<ContextDataProvider> data_provider = nullptr);
 
     void wait_until_ready();
 
     bool is_ready();
-    bool is_failed() const;
-    bool is_finalized() const;
-    bool is_finalizing() const;
-    int pending() const;
+    bool is_failed() const noexcept;
+    bool is_finalized() const noexcept;
+    bool is_finalizing() const noexcept;
+    int pending() const noexcept;
+    std::string ready_error() const noexcept;
 
     const ContextData& data() const;
-    std::vector<std::string> experiments() const;
+    std::vector<std::string> experiments();
 
     void set_unit(const std::string& unit_type, const std::string& uid);
     void set_units(const std::map<std::string, std::string>& units);
@@ -85,10 +89,11 @@ public:
 
     nlohmann::json variable_value(const std::string& key, const nlohmann::json& default_value);
     nlohmann::json peek_variable_value(const std::string& key, const nlohmann::json& default_value);
-    std::map<std::string, std::vector<std::string>> variable_keys() const;
+    std::map<std::string, std::vector<std::string>> variable_keys();
 
-    nlohmann::json custom_field_value(const std::string& experiment_name, const std::string& key) const;
-    std::vector<std::string> custom_field_keys() const;
+    nlohmann::json custom_field_value(const std::string& experiment_name, const std::string& key);
+    std::optional<std::string> custom_field_value_type(const std::string& experiment_name, const std::string& key);
+    std::vector<std::string> custom_field_keys();
 
     void track(const std::string& goal_name, const nlohmann::json& properties = nlohmann::json());
 
@@ -96,6 +101,7 @@ public:
 
     PublishEvent finalize();
 
+    void refresh();
     void refresh(const ContextData& new_data);
 
 private:
@@ -121,6 +127,7 @@ private:
     ContextData data_;
     bool ready_ = false;
     bool failed_ = false;
+    std::string failed_error_;
     bool finalized_ = false;
     bool finalizing_ = false;
     int pending_ = 0;
@@ -145,6 +152,7 @@ private:
 
     std::shared_ptr<ContextEventHandler> event_handler_;
     std::shared_ptr<ContextEventPublisher> event_publisher_;
+    std::shared_ptr<ContextDataProvider> data_provider_;
 
     std::future<ContextData> data_future_;
 

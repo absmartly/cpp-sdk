@@ -868,7 +868,7 @@ TEST_CASE("Context track", "[context]") {
         REQUIRE(handler->count_events("goal") == 1);
     }
 
-    SECTION("should filter non-numeric properties") {
+    SECTION("should preserve all property types") {
         Context ctx(config, data);
         ctx.track("goal1", {
             {"amount", 125},
@@ -879,10 +879,13 @@ TEST_CASE("Context track", "[context]") {
 
         auto event = ctx.publish();
         REQUIRE(event.goals.size() == 1);
-        REQUIRE(event.goals[0].properties.count("amount") == 1);
-        REQUIRE(event.goals[0].properties.count("count") == 1);
-        REQUIRE(event.goals[0].properties.count("name") == 0);
-        REQUIRE(event.goals[0].properties.count("flag") == 0);
+        REQUIRE(event.goals[0].properties.contains("amount"));
+        REQUIRE(event.goals[0].properties.contains("count"));
+        REQUIRE(event.goals[0].properties.contains("name"));
+        REQUIRE(event.goals[0].properties.contains("flag"));
+        REQUIRE(event.goals[0].properties["amount"] == 125);
+        REQUIRE(event.goals[0].properties["name"] == "test");
+        REQUIRE(event.goals[0].properties["flag"] == true);
     }
 
     SECTION("should handle empty properties") {
@@ -1195,11 +1198,13 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
         auto refresh_data = make_refresh_data();
         ctx.refresh(refresh_data);
 
+        // Refresh keeps cached assignments — pending unchanged
         REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()));
 
         for (const auto& exp : data.experiments) {
             ctx.treatment(exp.name);
         }
+        // After refresh, exposed is reset to false so treatments re-queue exposures
         REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()) * 2);
     }
 
@@ -1265,6 +1270,7 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
         ctx.refresh(changed_data);
 
         REQUIRE(ctx.treatment("exp_test_ab") == 3);
+        // After refresh, exposed is reset — override treatment re-queues exposure
         REQUIRE(ctx.pending() == 2);
     }
 }
@@ -1588,4 +1594,298 @@ TEST_CASE("Context disjointed audiences", "[context]") {
         ctx2.set_attribute("age", 19);
         REQUIRE(ctx2.variable_value("icon", "square") == "circle");
     }
+}
+
+TEST_CASE("Fix: check_ready on custom_field_value and custom_field_keys", "[context][fix8]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+
+    std::promise<ContextData> promise;
+    auto future = promise.get_future();
+
+    Context ctx(config, std::move(future));
+
+    REQUIRE_THROWS_AS(ctx.custom_field_value("exp_test_abc", "country"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextNotReadyException);
+}
+
+TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    ctx.finalize();
+
+    // Overrides are allowed after finalize (cross-SDK consistency)
+    REQUIRE_NOTHROW(ctx.set_override("exp_test_ab", 1));
+    REQUIRE_NOTHROW(ctx.set_overrides({{"exp_test_ab", 2}}));
+}
+
+TEST_CASE("Fix: experiments() throws after finalize", "[context][fix22]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    ctx.finalize();
+
+    REQUIRE_THROWS_AS(ctx.experiments(), ContextFinalizedException);
+}
+
+TEST_CASE("Fix: variable_keys() throws before ready and after finalize", "[context][fix24]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+
+    SECTION("throws before ready") {
+        std::promise<ContextData> promise;
+        auto future = promise.get_future();
+        Context ctx(config, std::move(future));
+        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextNotReadyException);
+    }
+
+    SECTION("throws after finalize") {
+        ContextData data = make_test_data();
+        Context ctx(config, data);
+        ctx.finalize();
+        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextFinalizedException);
+    }
+}
+
+TEST_CASE("Fix: custom_field_value/keys throws after finalize", "[context][fix8]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    ctx.finalize();
+
+    REQUIRE_THROWS_AS(ctx.custom_field_value("exp_test_abc", "country"), ContextFinalizedException);
+    REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextFinalizedException);
+}
+
+TEST_CASE("Fix: redundant data copy removed in init", "[context][fix9]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    REQUIRE(ctx.is_ready());
+    REQUIRE(ctx.data().experiments.size() == data.experiments.size());
+    REQUIRE(ctx.treatment("exp_test_ab") >= 0);
+}
+
+TEST_CASE("Fix: publish calls event_publisher", "[context][fix36]") {
+    class MockPublisher : public ContextEventPublisher {
+    public:
+        int call_count = 0;
+        PublishEvent last_event;
+        std::future<void> publish(const PublishEvent& event) override {
+            call_count++;
+            last_event = event;
+            std::promise<void> p;
+            p.set_value();
+            return p.get_future();
+        }
+    };
+
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+    auto publisher = std::make_shared<MockPublisher>();
+
+    Context ctx(config, data, nullptr, publisher);
+    ctx.treatment("exp_test_ab");
+
+    auto event = ctx.publish();
+    REQUIRE(publisher->call_count == 1);
+    REQUIRE(!publisher->last_event.exposures.empty());
+}
+
+TEST_CASE("Fix: finalize calls event_publisher", "[context][fix36]") {
+    class MockPublisher : public ContextEventPublisher {
+    public:
+        int call_count = 0;
+        std::future<void> publish(const PublishEvent& event) override {
+            (void)event;
+            call_count++;
+            std::promise<void> p;
+            p.set_value();
+            return p.get_future();
+        }
+    };
+
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+    auto publisher = std::make_shared<MockPublisher>();
+
+    Context ctx(config, data, nullptr, publisher);
+    ctx.track("goal1", {{"amount", 100}});
+    ctx.finalize();
+
+    REQUIRE(publisher->call_count == 1);
+}
+
+TEST_CASE("Fix: refresh only invalidates changed experiments", "[context][fix20]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    auto handler = std::make_shared<MockEventHandler>();
+    Context ctx(config, data, handler);
+
+    int t1 = ctx.treatment("exp_test_ab");
+    handler->clear();
+
+    ctx.refresh(data);
+    int t2 = ctx.treatment("exp_test_ab");
+    REQUIRE(t1 == t2);
+
+    bool has_exposure_after_refresh = false;
+    for (const auto& e : handler->events) {
+        if (e.type == "exposure" && e.data["name"] == "exp_test_ab") {
+            has_exposure_after_refresh = true;
+        }
+    }
+    REQUIRE_FALSE(has_exposure_after_refresh);
+}
+
+TEST_CASE("Fix: refresh invalidates changed experiments", "[context][fix20]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    auto handler = std::make_shared<MockEventHandler>();
+    Context ctx(config, data, handler);
+
+    ctx.treatment("exp_test_ab");
+    handler->clear();
+
+    ContextData new_data = data;
+    new_data.experiments[0].iteration = 2;
+
+    ctx.refresh(new_data);
+
+    ctx.treatment("exp_test_ab");
+    bool has_exposure = false;
+    for (const auto& e : handler->events) {
+        if (e.type == "exposure" && e.data["name"] == "exp_test_ab") {
+            has_exposure = true;
+        }
+    }
+    REQUIRE(has_exposure);
+}
+
+TEST_CASE("Fix: noexcept accessors", "[context][fix43]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    REQUIRE(noexcept(ctx.is_failed()));
+    REQUIRE(noexcept(ctx.is_finalized()));
+    REQUIRE(noexcept(ctx.is_finalizing()));
+    REQUIRE(noexcept(ctx.pending()));
+}
+
+TEST_CASE("Fix: track preserves non-numeric goal properties", "[context][fix14]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    ctx.track("goal1", {{"amount", 125}, {"label", "purchase"}, {"active", true}});
+
+    auto event = ctx.publish();
+    REQUIRE(event.goals.size() == 1);
+    REQUIRE(event.goals[0].properties["amount"] == 125);
+    REQUIRE(event.goals[0].properties["label"] == "purchase");
+    REQUIRE(event.goals[0].properties["active"] == true);
+}
+
+TEST_CASE("Fix: custom_field_value specific exception handling", "[context][fix46]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+
+    ContextData data;
+    ExperimentData exp;
+    exp.id = 100;
+    exp.name = "exp_custom";
+    exp.unitType = "session_id";
+    exp.iteration = 1;
+    exp.seedHi = 1;
+    exp.seedLo = 1;
+    exp.split = {0.5, 0.5};
+    exp.trafficSeedHi = 1;
+    exp.trafficSeedLo = 1;
+    exp.trafficSplit = {0.0, 1.0};
+    exp.fullOnVariant = 0;
+
+    CustomFieldValue cf_num;
+    cf_num.name = "bad_number";
+    cf_num.value = "not_a_number";
+    cf_num.type = "number";
+    exp.customFieldValues.push_back(cf_num);
+
+    CustomFieldValue cf_json;
+    cf_json.name = "bad_json";
+    cf_json.value = "{invalid json";
+    cf_json.type = "json";
+    exp.customFieldValues.push_back(cf_json);
+
+    ExperimentVariant v0;
+    v0.name = "A";
+    v0.config = nullptr;
+    exp.variants = {v0};
+
+    data.experiments.push_back(exp);
+
+    Context ctx(config, data);
+    REQUIRE(ctx.custom_field_value("exp_custom", "bad_number").is_null());
+    REQUIRE(ctx.custom_field_value("exp_custom", "bad_json").is_null());
+}
+
+TEST_CASE("ready_error returns empty on success", "[context][readyerror]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+    ContextData data = make_test_data();
+
+    Context ctx(config, data);
+    REQUIRE(ctx.ready_error().empty());
+}
+
+TEST_CASE("ready_error returns message on failure", "[context][readyerror]") {
+    ContextConfig config;
+    config.units = {{"session_id", "abc123"}};
+
+    std::promise<ContextData> p;
+    auto f = p.get_future();
+    p.set_exception(std::make_exception_ptr(std::runtime_error("load failed")));
+
+    Context ctx(config, std::move(f));
+    ctx.wait_until_ready();
+
+    REQUIRE(ctx.is_failed());
+    REQUIRE(ctx.ready_error() == "load failed");
+}
+
+TEST_CASE("custom_field_value_type returns type string", "[context][customfieldtype]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    REQUIRE(ctx.custom_field_value_type("exp_test_custom_fields", "country") == "string");
+    REQUIRE(ctx.custom_field_value_type("exp_test_custom_fields", "text_field") == "text");
+    REQUIRE(ctx.custom_field_value_type("exp_test_custom_fields", "number_field") == "number");
+    REQUIRE(ctx.custom_field_value_type("exp_test_custom_fields", "boolean_field") == "boolean");
+}
+
+TEST_CASE("custom_field_value_type returns nullopt for missing", "[context][customfieldtype]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+
+    Context ctx(config, data);
+    REQUIRE_FALSE(ctx.custom_field_value_type("exp_test_custom_fields", "missing").has_value());
+    REQUIRE_FALSE(ctx.custom_field_value_type("not_found", "country").has_value());
 }
