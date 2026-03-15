@@ -294,6 +294,24 @@ public:
     }
 };
 
+class MockDataProvider : public ContextDataProvider {
+public:
+    explicit MockDataProvider(ContextData data) : data_(std::move(data)) {}
+
+    std::future<ContextData> get_context_data() override {
+        std::promise<ContextData> promise;
+        promise.set_value(data_);
+        return promise.get_future();
+    }
+
+    void set_data(ContextData data) {
+        data_ = std::move(data);
+    }
+
+private:
+    ContextData data_;
+};
+
 TEST_CASE("Context construction", "[context]") {
     auto data = make_test_data();
     auto config = make_test_config();
@@ -1090,13 +1108,14 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
 
     SECTION("should clear cache for started experiment") {
         auto data = make_test_data();
-        Context ctx(config, data);
+        auto refresh_data = make_refresh_data();
+        auto provider = std::make_shared<MockDataProvider>(refresh_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
         REQUIRE(ctx.treatment("exp_test_new") == 0);
         REQUIRE(ctx.pending() == 1);
 
-        auto refresh_data = make_refresh_data();
-        ctx.refresh(refresh_data);
+        ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_new") == 1);
         REQUIRE(ctx.pending() == 2);
@@ -1104,19 +1123,19 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
 
     SECTION("should clear cache for stopped experiment") {
         auto data = make_test_data();
-        Context ctx(config, data);
-
-        REQUIRE(ctx.treatment("exp_test_abc") == 2);
-        REQUIRE(ctx.pending() == 1);
-
         auto stopped_data = data;
         stopped_data.experiments.erase(
             std::remove_if(stopped_data.experiments.begin(),
                            stopped_data.experiments.end(),
                            [](const ExperimentData& e) { return e.name == "exp_test_abc"; }),
             stopped_data.experiments.end());
+        auto provider = std::make_shared<MockDataProvider>(stopped_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
-        ctx.refresh(stopped_data);
+        REQUIRE(ctx.treatment("exp_test_abc") == 2);
+        REQUIRE(ctx.pending() == 1);
+
+        ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_abc") == 0);
         REQUIRE(ctx.pending() == 2);
@@ -1124,11 +1143,6 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
 
     SECTION("should clear cache when experiment ID changes") {
         auto data = make_test_data();
-        Context ctx(config, data);
-
-        REQUIRE(ctx.treatment("exp_test_abc") == 2);
-        REQUIRE(ctx.pending() == 1);
-
         auto changed_data = data;
         for (auto& exp : changed_data.experiments) {
             if (exp.name == "exp_test_abc") {
@@ -1139,8 +1153,13 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
                 exp.seedLo = 34737352;
             }
         }
+        auto provider = std::make_shared<MockDataProvider>(changed_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
-        ctx.refresh(changed_data);
+        REQUIRE(ctx.treatment("exp_test_abc") == 2);
+        REQUIRE(ctx.pending() == 1);
+
+        ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_abc") == 2);
         REQUIRE(ctx.pending() == 2);
@@ -1148,19 +1167,19 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
 
     SECTION("should clear cache when full-on changes") {
         auto data = make_test_data();
-        Context ctx(config, data);
-
-        REQUIRE(ctx.treatment("exp_test_abc") == 2);
-        REQUIRE(ctx.pending() == 1);
-
         auto fullon_data = data;
         for (auto& exp : fullon_data.experiments) {
             if (exp.name == "exp_test_abc") {
                 exp.fullOnVariant = 1;
             }
         }
+        auto provider = std::make_shared<MockDataProvider>(fullon_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
-        ctx.refresh(fullon_data);
+        REQUIRE(ctx.treatment("exp_test_abc") == 2);
+        REQUIRE(ctx.pending() == 1);
+
+        ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_abc") == 1);
         REQUIRE(ctx.pending() == 2);
@@ -1168,19 +1187,19 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
 
     SECTION("should clear cache when traffic split changes") {
         auto data = make_test_data();
-        Context ctx(config, data);
-
-        REQUIRE(ctx.treatment("exp_test_not_eligible") == 0);
-        REQUIRE(ctx.pending() == 1);
-
         auto split_data = data;
         for (auto& exp : split_data.experiments) {
             if (exp.name == "exp_test_not_eligible") {
                 exp.trafficSplit = {0.0, 1.0};
             }
         }
+        auto provider = std::make_shared<MockDataProvider>(split_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
-        ctx.refresh(split_data);
+        REQUIRE(ctx.treatment("exp_test_not_eligible") == 0);
+        REQUIRE(ctx.pending() == 1);
+
+        ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_not_eligible") == 2);
         REQUIRE(ctx.pending() == 2);
@@ -1188,89 +1207,91 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
 
     SECTION("should re-queue exposures after refresh even when not changed") {
         auto data = make_test_data();
-        Context ctx(config, data);
-
-        for (const auto& exp : data.experiments) {
-            ctx.treatment(exp.name);
-        }
-        REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()));
-
         auto refresh_data = make_refresh_data();
-        ctx.refresh(refresh_data);
+        auto provider = std::make_shared<MockDataProvider>(refresh_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
-        // Refresh keeps cached assignments — pending unchanged
+        for (const auto& exp : data.experiments) {
+            ctx.treatment(exp.name);
+        }
+        REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()));
+
+        ctx.refresh();
+
         REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()));
 
         for (const auto& exp : data.experiments) {
             ctx.treatment(exp.name);
         }
-        // After refresh, exposed is reset to false so treatments re-queue exposures
         REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()) * 2);
     }
 
     SECTION("should keep overrides after refresh") {
         auto data = make_test_data();
-        Context ctx(config, data);
+        auto refresh_data = make_refresh_data();
+        auto provider = std::make_shared<MockDataProvider>(refresh_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
         ctx.set_override("not_found", 3);
         REQUIRE(ctx.peek("not_found") == 3);
 
-        auto refresh_data = make_refresh_data();
-        ctx.refresh(refresh_data);
+        ctx.refresh();
 
         REQUIRE(ctx.peek("not_found") == 3);
     }
 
     SECTION("should keep custom assignments after refresh") {
         auto data = make_test_data();
-        Context ctx(config, data);
+        auto refresh_data = make_refresh_data();
+        auto provider = std::make_shared<MockDataProvider>(refresh_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
         ctx.set_custom_assignment("exp_test_ab", 3);
         REQUIRE(ctx.peek("exp_test_ab") == 3);
 
-        auto refresh_data = make_refresh_data();
-        ctx.refresh(refresh_data);
+        ctx.refresh();
 
         REQUIRE(ctx.peek("exp_test_ab") == 3);
     }
 
     SECTION("should throw after finalize") {
         auto data = make_test_data();
-        Context ctx(config, data);
+        auto provider = std::make_shared<MockDataProvider>(data);
+        Context ctx(config, data, nullptr, nullptr, provider);
         ctx.finalize();
 
-        REQUIRE_THROWS_AS(ctx.refresh(data), ContextFinalizedException);
+        REQUIRE_THROWS_AS(ctx.refresh(), ContextFinalizedException);
     }
 
     SECTION("should emit refresh event") {
         auto data = make_test_data();
         auto handler = std::make_shared<MockEventHandler>();
-        Context ctx(config, data, handler);
+        auto provider = std::make_shared<MockDataProvider>(data);
+        Context ctx(config, data, handler, nullptr, provider);
 
         handler->clear();
-        ctx.refresh(data);
+        ctx.refresh();
         REQUIRE(handler->count_events("refresh") == 1);
     }
 
     SECTION("should re-queue overridden experiment exposure after refresh") {
         auto data = make_test_data();
-        Context ctx(config, data);
-
-        ctx.set_override("exp_test_ab", 3);
-        REQUIRE(ctx.treatment("exp_test_ab") == 3);
-        REQUIRE(ctx.pending() == 1);
-
         auto changed_data = data;
         for (auto& exp : changed_data.experiments) {
             if (exp.name == "exp_test_ab") {
                 exp.id = 99;
             }
         }
+        auto provider = std::make_shared<MockDataProvider>(changed_data);
+        Context ctx(config, data, nullptr, nullptr, provider);
 
-        ctx.refresh(changed_data);
+        ctx.set_override("exp_test_ab", 3);
+        REQUIRE(ctx.treatment("exp_test_ab") == 3);
+        REQUIRE(ctx.pending() == 1);
+
+        ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_ab") == 3);
-        // After refresh, exposed is reset — override treatment re-queues exposure
         REQUIRE(ctx.pending() == 2);
     }
 }
@@ -1733,12 +1754,13 @@ TEST_CASE("Fix: refresh only invalidates changed experiments", "[context][fix20]
     ContextData data = make_test_data();
 
     auto handler = std::make_shared<MockEventHandler>();
-    Context ctx(config, data, handler);
+    auto provider = std::make_shared<MockDataProvider>(data);
+    Context ctx(config, data, handler, nullptr, provider);
 
     int t1 = ctx.treatment("exp_test_ab");
     handler->clear();
 
-    ctx.refresh(data);
+    ctx.refresh();
     int t2 = ctx.treatment("exp_test_ab");
     REQUIRE(t1 == t2);
 
@@ -1756,16 +1778,17 @@ TEST_CASE("Fix: refresh invalidates changed experiments", "[context][fix20]") {
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
 
+    ContextData new_data = data;
+    new_data.experiments[0].iteration = 2;
+
     auto handler = std::make_shared<MockEventHandler>();
-    Context ctx(config, data, handler);
+    auto provider = std::make_shared<MockDataProvider>(new_data);
+    Context ctx(config, data, handler, nullptr, provider);
 
     ctx.treatment("exp_test_ab");
     handler->clear();
 
-    ContextData new_data = data;
-    new_data.experiments[0].iteration = 2;
-
-    ctx.refresh(new_data);
+    ctx.refresh();
 
     ctx.treatment("exp_test_ab");
     bool has_exposure = false;
