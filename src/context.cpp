@@ -393,7 +393,6 @@ std::vector<std::string> Context::custom_field_keys() {
 }
 
 void Context::track(const std::string& goal_name, const nlohmann::json& properties) {
-    check_ready();
     check_not_finalized();
 
     GoalAchievement goal;
