@@ -429,10 +429,10 @@ TEST_CASE("Context treatment", "[context]") {
         REQUIRE(handler->count_events("exposure") == 0);
     }
 
-    SECTION("should throw after finalize") {
+    SECTION("should not throw after finalize") {
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_THROWS_AS(ctx.treatment("exp_test_ab"), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.treatment("exp_test_ab"));
     }
 }
 
@@ -714,10 +714,10 @@ TEST_CASE("Context variables", "[context]") {
         REQUIRE(ctx.variable_value("banner.size", 17) == 17);
     }
 
-    SECTION("should throw after finalize") {
+    SECTION("should not throw after finalize") {
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_THROWS_AS(ctx.variable_value("banner.size", 0), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.variable_value("banner.size", 0));
     }
 }
 
@@ -1092,14 +1092,14 @@ TEST_CASE("Context finalize", "[context]") {
         Context ctx(config, data);
         ctx.finalize();
 
-        REQUIRE_THROWS_AS(ctx.treatment("exp_test_ab"), ContextFinalizedException);
-        REQUIRE_THROWS_AS(ctx.peek("exp_test_ab"), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.treatment("exp_test_ab"));
+        REQUIRE_NOTHROW(ctx.peek("exp_test_ab"));
         REQUIRE_THROWS_AS(ctx.track("goal1"), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_attribute("a", 1), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_unit("test", "test"), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_custom_assignment("exp", 1), ContextFinalizedException);
-        REQUIRE_THROWS_AS(ctx.variable_value("key", 0), ContextFinalizedException);
-        REQUIRE_THROWS_AS(ctx.peek_variable_value("key", 0), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.variable_value("key", 0));
+        REQUIRE_NOTHROW(ctx.peek_variable_value("key", 0));
     }
 }
 
@@ -1617,7 +1617,7 @@ TEST_CASE("Context disjointed audiences", "[context]") {
     }
 }
 
-TEST_CASE("Fix: check_ready on custom_field_value and custom_field_keys", "[context][fix8]") {
+TEST_CASE("Fix: custom_field_value and custom_field_keys return safe defaults when not ready", "[context][fix8]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
 
@@ -1626,8 +1626,8 @@ TEST_CASE("Fix: check_ready on custom_field_value and custom_field_keys", "[cont
 
     Context ctx(config, std::move(future));
 
-    REQUIRE_THROWS_AS(ctx.custom_field_value("exp_test_abc", "country"), ContextNotReadyException);
-    REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextNotReadyException);
+    REQUIRE(ctx.custom_field_value("exp_test_abc", "country") == nullptr);
+    REQUIRE(ctx.custom_field_keys().empty());
 }
 
 TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
@@ -1643,7 +1643,7 @@ TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
     REQUIRE_NOTHROW(ctx.set_overrides({{"exp_test_ab", 2}}));
 }
 
-TEST_CASE("Fix: experiments() throws after finalize", "[context][fix22]") {
+TEST_CASE("Fix: experiments() does not throw after finalize", "[context][fix22]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
@@ -1651,29 +1651,29 @@ TEST_CASE("Fix: experiments() throws after finalize", "[context][fix22]") {
     Context ctx(config, data);
     ctx.finalize();
 
-    REQUIRE_THROWS_AS(ctx.experiments(), ContextFinalizedException);
+    REQUIRE_NOTHROW(ctx.experiments());
 }
 
-TEST_CASE("Fix: variable_keys() throws before ready and after finalize", "[context][fix24]") {
+TEST_CASE("Fix: variable_keys() returns empty before ready and after finalize", "[context][fix24]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
 
-    SECTION("throws before ready") {
+    SECTION("returns empty before ready") {
         std::promise<ContextData> promise;
         auto future = promise.get_future();
         Context ctx(config, std::move(future));
-        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextNotReadyException);
+        REQUIRE(ctx.variable_keys().empty());
     }
 
-    SECTION("throws after finalize") {
+    SECTION("does not throw after finalize") {
         ContextData data = make_test_data();
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.variable_keys());
     }
 }
 
-TEST_CASE("Fix: custom_field_value/keys throws after finalize", "[context][fix8]") {
+TEST_CASE("Fix: custom_field_value/keys do not throw after finalize", "[context][fix8]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
@@ -1681,8 +1681,8 @@ TEST_CASE("Fix: custom_field_value/keys throws after finalize", "[context][fix8]
     Context ctx(config, data);
     ctx.finalize();
 
-    REQUIRE_THROWS_AS(ctx.custom_field_value("exp_test_abc", "country"), ContextFinalizedException);
-    REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextFinalizedException);
+    REQUIRE_NOTHROW(ctx.custom_field_value("exp_test_abc", "country"));
+    REQUIRE_NOTHROW(ctx.custom_field_keys());
 }
 
 TEST_CASE("Fix: redundant data copy removed in init", "[context][fix9]") {

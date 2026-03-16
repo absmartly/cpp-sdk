@@ -142,7 +142,6 @@ const ContextData& Context::data() const {
 }
 
 std::vector<std::string> Context::experiments() {
-    check_not_finalized();
     std::vector<std::string> result;
     result.reserve(data_.experiments.size());
     for (const auto& exp : data_.experiments) {
@@ -241,8 +240,7 @@ void Context::set_custom_assignments(const std::map<std::string, int>& assignmen
 }
 
 int Context::treatment(const std::string& experiment_name) {
-    check_ready();
-    check_not_finalized();
+    if (!ready_) return 0;
 
     auto& assignment = get_or_create_assignment(experiment_name);
 
@@ -255,16 +253,14 @@ int Context::treatment(const std::string& experiment_name) {
 }
 
 int Context::peek(const std::string& experiment_name) {
-    check_ready();
-    check_not_finalized();
+    if (!ready_) return 0;
 
     auto& assignment = get_or_create_assignment(experiment_name);
     return assignment.variant;
 }
 
 nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
-    check_ready();
-    check_not_finalized();
+    if (!ready_) return default_value;
 
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
@@ -292,8 +288,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
 }
 
 nlohmann::json Context::peek_variable_value(const std::string& key, const nlohmann::json& default_value) {
-    check_ready();
-    check_not_finalized();
+    if (!ready_) return default_value;
 
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
@@ -316,8 +311,6 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
 }
 
 std::map<std::string, std::vector<std::string>> Context::variable_keys() {
-    check_ready();
-    check_not_finalized();
     std::map<std::string, std::vector<std::string>> result;
 
     for (const auto& [key, experiments_for_var] : index_variables_) {
@@ -330,8 +323,6 @@ std::map<std::string, std::vector<std::string>> Context::variable_keys() {
 }
 
 nlohmann::json Context::custom_field_value(const std::string& experiment_name, const std::string& key) {
-    check_ready();
-    check_not_finalized();
     auto it = index_.find(experiment_name);
     if (it == index_.end()) {
         return nullptr;
@@ -376,8 +367,6 @@ nlohmann::json Context::custom_field_value(const std::string& experiment_name, c
 }
 
 std::optional<std::string> Context::custom_field_value_type(const std::string& experiment_name, const std::string& key) {
-    check_ready();
-    check_not_finalized();
     auto it = index_.find(experiment_name);
     if (it == index_.end()) {
         return std::nullopt;
@@ -394,8 +383,6 @@ std::optional<std::string> Context::custom_field_value_type(const std::string& e
 }
 
 std::vector<std::string> Context::custom_field_keys() {
-    check_ready();
-    check_not_finalized();
     std::set<std::string> keys;
     for (const auto& exp : data_.experiments) {
         for (const auto& field : exp.customFieldValues) {
