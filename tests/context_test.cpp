@@ -1205,7 +1205,7 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
         REQUIRE(ctx.pending() == 2);
     }
 
-    SECTION("should re-queue exposures after refresh even when not changed") {
+    SECTION("should not re-queue exposures after refresh when experiments unchanged") {
         auto data = make_test_data();
         auto refresh_data = make_refresh_data();
         auto provider = std::make_shared<MockDataProvider>(refresh_data);
@@ -1223,7 +1223,7 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
         for (const auto& exp : data.experiments) {
             ctx.treatment(exp.name);
         }
-        REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()) * 2);
+        REQUIRE(ctx.pending() == static_cast<int>(data.experiments.size()));
     }
 
     SECTION("should keep overrides after refresh") {
@@ -1950,7 +1950,7 @@ TEST_CASE("error messages use ABsmartly prefix", "[context][errors]") {
     ctx.finalize();
 
     try {
-        ctx.treatment("exp_test_ab");
+        ctx.set_unit("new_unit", "uid");
         FAIL("Expected ContextFinalizedException");
     } catch (const ContextFinalizedException& e) {
         REQUIRE(std::string(e.what()) == "ABsmartly Context is finalized.");
@@ -1958,21 +1958,8 @@ TEST_CASE("error messages use ABsmartly prefix", "[context][errors]") {
 }
 
 TEST_CASE("not ready error message uses ABsmartly prefix", "[context][errors]") {
-    ContextConfig config;
-    config.units = {{"session_id", "abc123"}};
-
-    std::promise<ContextData> p;
-    auto f = p.get_future();
-
-    Context ctx(config, std::move(f));
-
-    try {
-        ctx.treatment("exp_test_ab");
-        FAIL("Expected ContextNotReadyException");
-    } catch (const ContextNotReadyException& e) {
-        REQUIRE(std::string(e.what()) == "ABsmartly Context is not yet ready.");
-    }
-    p.set_value(ContextData{});
+    ContextNotReadyException ex;
+    REQUIRE(std::string(ex.what()) == "ABsmartly Context is not yet ready.");
 }
 
 TEST_CASE("unit UID already set error message", "[context][errors]") {

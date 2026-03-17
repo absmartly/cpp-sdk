@@ -491,6 +491,15 @@ void Context::refresh(const ContextData& new_data) {
     hashes_.clear();
     assigners_.clear();
 
+    for (auto& [name, assignment] : assignments_) {
+        if (assignment.overridden) {
+            auto exp_it = index_.find(name);
+            if (exp_it != index_.end() && exp_it->second.data->id != assignment.id) {
+                assignment.exposed = false;
+            }
+        }
+    }
+
     nlohmann::json refresh_data;
     nlohmann::json refresh_exps = nlohmann::json::array();
     for (const auto& exp : data_.experiments) {
