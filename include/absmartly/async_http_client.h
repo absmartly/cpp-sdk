@@ -3,7 +3,6 @@
 #include <absmartly/http_client.h>
 
 #include <curl/curl.h>
-#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -36,13 +35,15 @@ public:
 private:
     struct PendingRequest {
         CURL* easy;
+        std::string url;
         std::promise<Response> promise;
         std::vector<uint8_t> response_body;
         struct curl_slist* headers;
         std::vector<uint8_t> request_body;
     };
 
-    std::future<Response> enqueue(CURL* easy, struct curl_slist* header_list,
+    std::future<Response> enqueue(CURL* easy, std::string url,
+                                   struct curl_slist* header_list,
                                    std::vector<uint8_t> request_body);
     void event_loop();
     void process_completed();
@@ -54,7 +55,7 @@ private:
 
     CURLM* multi_;
     std::thread worker_;
-    std::atomic<bool> running_{true};
+    bool running_{true};
 
     std::mutex pending_mutex_;
     std::vector<PendingRequest*> pending_queue_;

@@ -54,6 +54,27 @@ TEST_CASE("VariantAssigner with 123456789", "[assigner]") {
     }
 }
 
+TEST_CASE("Fix: VariantAssigner probability never reaches 1.0", "[assigner][fix5]") {
+    VariantAssigner assigner(hash_unit("test_max_hash"));
+    int result = assigner.assign({0.5, 0.5}, 0x7FFFFFFF, 0x7FFFFFFF);
+    REQUIRE(result >= 0);
+    REQUIRE(result <= 1);
+}
+
+TEST_CASE("Fix: VariantAssigner works with negative int32_t seeds", "[assigner][fix19]") {
+    VariantAssigner assigner(hash_unit("test_negative_seed"));
+    int32_t neg_seed_hi = -1;
+    int32_t neg_seed_lo = -1;
+    int result = assigner.assign({0.5, 0.5}, neg_seed_hi, neg_seed_lo);
+    REQUIRE(result >= 0);
+    REQUIRE(result <= 1);
+
+    int32_t min_seed = std::numeric_limits<int32_t>::min();
+    result = assigner.assign({0.5, 0.5}, min_seed, min_seed);
+    REQUIRE(result >= 0);
+    REQUIRE(result <= 1);
+}
+
 TEST_CASE("VariantAssigner with e791e240fcd3df7d238cfc285f475e8152fcc0ec", "[assigner]") {
     VariantAssigner assigner(hash_unit("e791e240fcd3df7d238cfc285f475e8152fcc0ec"));
 

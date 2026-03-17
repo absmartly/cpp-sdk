@@ -1,17 +1,27 @@
 #include "absmartly/async_http_client.h"
 
 #include <sstream>
+#include <mutex>
 
 namespace absmartly {
 
+static std::once_flag curl_init_flag;
+
+static void ensure_curl_initialized() {
+    std::call_once(curl_init_flag, [] { curl_global_init(CURL_GLOBAL_ALL); });
+}
+
 AsyncHTTPClient::AsyncHTTPClient() {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    ensure_curl_initialized();
     multi_ = curl_multi_init();
     worker_ = std::thread(&AsyncHTTPClient::event_loop, this);
 }
 
 AsyncHTTPClient::~AsyncHTTPClient() {
-    running_ = false;
+    {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        running_ = false;
+    }
     pending_cv_.notify_one();
     if (worker_.joinable()) {
         worker_.join();
@@ -28,7 +38,6 @@ AsyncHTTPClient::~AsyncHTTPClient() {
     }
 
     curl_multi_cleanup(multi_);
-    curl_global_cleanup();
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::get(
@@ -43,11 +52,10 @@ std::future<HTTPClient::Response> AsyncHTTPClient::get(
         return p.get_future();
     }
 
-    std::string full_url = build_url_with_query(url, query);
-    curl_easy_setopt(easy, CURLOPT_URL, full_url.c_str());
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_HTTPGET, 1L);
 
-    return enqueue(easy, build_header_list(headers), {});
+    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), {});
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::put(
@@ -63,12 +71,11 @@ std::future<HTTPClient::Response> AsyncHTTPClient::put(
         return p.get_future();
     }
 
-    std::string full_url = build_url_with_query(url, query);
-    curl_easy_setopt(easy, CURLOPT_URL, full_url.c_str());
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, "PUT");
 
     std::vector<uint8_t> body_copy(body);
-    return enqueue(easy, build_header_list(headers), std::move(body_copy));
+    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), std::move(body_copy));
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::post(
@@ -84,21 +91,25 @@ std::future<HTTPClient::Response> AsyncHTTPClient::post(
         return p.get_future();
     }
 
-    std::string full_url = build_url_with_query(url, query);
-    curl_easy_setopt(easy, CURLOPT_URL, full_url.c_str());
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_POST, 1L);
 
     std::vector<uint8_t> body_copy(body);
-    return enqueue(easy, build_header_list(headers), std::move(body_copy));
+    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), std::move(body_copy));
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
-    CURL* easy, struct curl_slist* header_list, std::vector<uint8_t> request_body) {
+    CURL* easy, std::string url, struct curl_slist* header_list, std::vector<uint8_t> request_body) {
 
     auto* req = new PendingRequest();
     req->easy = easy;
+    req->url = std::move(url);
     req->headers = header_list;
     req->request_body = std::move(request_body);
+
+    curl_easy_setopt(easy, CURLOPT_URL, req->url.c_str());
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 5L);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT, 30L);
 
     if (header_list) {
         curl_easy_setopt(easy, CURLOPT_HTTPHEADER, header_list);
@@ -124,9 +135,12 @@ std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
 }
 
 void AsyncHTTPClient::event_loop() {
-    while (running_) {
+    while (true) {
         {
             std::lock_guard<std::mutex> lock(pending_mutex_);
+            if (!running_ && pending_queue_.empty()) {
+                break;
+            }
             for (auto* req : pending_queue_) {
                 curl_multi_add_handle(multi_, req->easy);
                 active_requests_[req->easy] = req;
@@ -207,19 +221,19 @@ std::string AsyncHTTPClient::build_url_with_query(const std::string& url,
     oss << url;
 
     bool has_query = url.find('?') != std::string::npos;
-    for (const auto& [key, value] : query) {
-        oss << (has_query ? '&' : '?');
-        has_query = true;
+    CURL* curl = curl_easy_init();
+    if (curl) {
+        for (const auto& [key, value] : query) {
+            oss << (has_query ? '&' : '?');
+            has_query = true;
 
-        CURL* curl = curl_easy_init();
-        if (curl) {
             char* encoded_key = curl_easy_escape(curl, key.c_str(), static_cast<int>(key.size()));
             char* encoded_value = curl_easy_escape(curl, value.c_str(), static_cast<int>(value.size()));
             oss << encoded_key << '=' << encoded_value;
             curl_free(encoded_key);
             curl_free(encoded_value);
-            curl_easy_cleanup(curl);
         }
+        curl_easy_cleanup(curl);
     }
 
     return oss.str();

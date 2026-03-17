@@ -1,26 +1,33 @@
 #include "absmartly/default_http_client.h"
 
 #include <sstream>
+#include <mutex>
 
 namespace absmartly {
 
+static std::once_flag default_curl_init_flag;
+
+static void ensure_default_curl_initialized() {
+    std::call_once(default_curl_init_flag, [] { curl_global_init(CURL_GLOBAL_ALL); });
+}
+
 DefaultHTTPClient::DefaultHTTPClient() {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    ensure_default_curl_initialized();
 }
 
 DefaultHTTPClient::~DefaultHTTPClient() {
-    curl_global_cleanup();
 }
 
 std::future<HTTPClient::Response> DefaultHTTPClient::get(const std::string& url,
                                                          const std::map<std::string, std::string>& query,
                                                          const std::map<std::string, std::string>& headers) {
-    return std::async(std::launch::async, [this, url, query, headers]() -> HTTPClient::Response {
+    return std::async(std::launch::async, [url, query, headers]() -> HTTPClient::Response {
         CURL* curl = curl_easy_init();
         if (!curl) {
             return {500, "Failed to initialize CURL", "", {}};
         }
 
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         std::string full_url = build_url_with_query(url, query);
         curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
@@ -45,16 +52,17 @@ std::future<HTTPClient::Response> DefaultHTTPClient::put(const std::string& url,
                                                          const std::map<std::string, std::string>& query,
                                                          const std::map<std::string, std::string>& headers,
                                                          const std::vector<uint8_t>& body) {
-    return std::async(std::launch::async, [this, url, query, headers, body]() -> HTTPClient::Response {
+    return std::async(std::launch::async, [url, query, headers, body]() -> HTTPClient::Response {
         CURL* curl = curl_easy_init();
         if (!curl) {
             return {500, "Failed to initialize CURL", "", {}};
         }
 
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         std::string full_url = build_url_with_query(url, query);
         curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
+        curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, reinterpret_cast<const char*>(body.data()));
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
 
         struct curl_slist* header_list = build_header_list(headers);
@@ -77,16 +85,17 @@ std::future<HTTPClient::Response> DefaultHTTPClient::post(const std::string& url
                                                           const std::map<std::string, std::string>& query,
                                                           const std::map<std::string, std::string>& headers,
                                                           const std::vector<uint8_t>& body) {
-    return std::async(std::launch::async, [this, url, query, headers, body]() -> HTTPClient::Response {
+    return std::async(std::launch::async, [url, query, headers, body]() -> HTTPClient::Response {
         CURL* curl = curl_easy_init();
         if (!curl) {
             return {500, "Failed to initialize CURL", "", {}};
         }
 
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         std::string full_url = build_url_with_query(url, query);
         curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.data());
+        curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, reinterpret_cast<const char*>(body.data()));
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
 
         struct curl_slist* header_list = build_header_list(headers);
@@ -115,19 +124,19 @@ std::string DefaultHTTPClient::build_url_with_query(const std::string& url,
     oss << url;
 
     bool has_query = url.find('?') != std::string::npos;
-    for (const auto& [key, value] : query) {
-        oss << (has_query ? '&' : '?');
-        has_query = true;
+    CURL* curl = curl_easy_init();
+    if (curl) {
+        for (const auto& [key, value] : query) {
+            oss << (has_query ? '&' : '?');
+            has_query = true;
 
-        CURL* curl = curl_easy_init();
-        if (curl) {
             char* encoded_key = curl_easy_escape(curl, key.c_str(), static_cast<int>(key.size()));
             char* encoded_value = curl_easy_escape(curl, value.c_str(), static_cast<int>(value.size()));
             oss << encoded_key << '=' << encoded_value;
             curl_free(encoded_key);
             curl_free(encoded_value);
-            curl_easy_cleanup(curl);
         }
+        curl_easy_cleanup(curl);
     }
 
     return oss.str();
@@ -148,6 +157,8 @@ HTTPClient::Response DefaultHTTPClient::perform_request(CURL* curl) {
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {

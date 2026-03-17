@@ -79,3 +79,9 @@ TEST_CASE("base64url_no_padding matches known encodings", "[utils]") {
         REQUIRE(encoded == tc.expected);
     }
 }
+
+TEST_CASE("Fix: choose_variant returns 0 for empty split", "[utils][fix44]") {
+    REQUIRE(choose_variant({}, 0.0) == 0);
+    REQUIRE(choose_variant({}, 0.5) == 0);
+    REQUIRE(choose_variant({}, 1.0) == 0);
+}

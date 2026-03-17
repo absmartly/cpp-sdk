@@ -266,6 +266,10 @@ nlohmann::json MatchOperator::evaluate(
         return nullptr;
     }
 
+    if (pattern->size() > 1024 || text->size() > 65536) {
+        return nullptr;
+    }
+
     try {
         std::regex re(*pattern);
         return std::regex_search(*text, re);

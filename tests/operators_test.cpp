@@ -475,4 +475,16 @@ TEST_CASE("MatchOperator", "[operators][match]") {
         json expr = {{"match", json::array({json{{"value", "abc"}}, json{{"value", "[invalid"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars).is_null());
     }
+
+    SECTION("Fix: overly long pattern returns null (ReDoS protection)") {
+        std::string long_pattern(1025, 'a');
+        json expr = {{"match", json::array({json{{"value", "abc"}}, json{{"value", long_pattern}}})}};
+        REQUIRE(evaluator.evaluate(expr, vars).is_null());
+    }
+
+    SECTION("Fix: overly long text returns null (ReDoS protection)") {
+        std::string long_text(65537, 'a');
+        json expr = {{"match", json::array({json{{"value", long_text}}, json{{"value", "a+"}}})}};
+        REQUIRE(evaluator.evaluate(expr, vars).is_null());
+    }
 }

@@ -53,6 +53,9 @@ std::string hash_unit(const std::string& unit) {
 }
 
 int choose_variant(const std::vector<double>& split, double probability) {
+    if (split.empty()) {
+        return 0;
+    }
     double cum_sum = 0.0;
     for (size_t i = 0; i < split.size(); ++i) {
         cum_sum += split[i];

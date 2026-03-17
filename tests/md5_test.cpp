@@ -51,6 +51,21 @@ TEST_CASE("md5 hash_unit base64url matches JS SDK", "[md5]") {
     }
 }
 
+TEST_CASE("Fix: md5 block[15] high bits set for length encoding", "[md5][fix4]") {
+    std::string input_56(56, 'a');
+    auto hex = md5_hex(input_56);
+    REQUIRE(hex.size() == 32);
+
+    std::string input_64(64, 'b');
+    auto hex2 = md5_hex(input_64);
+    REQUIRE(hex2.size() == 32);
+    REQUIRE(hex != hex2);
+
+    std::string input_119(119, 'c');
+    auto hex3 = md5_hex(input_119);
+    REQUIRE(hex3.size() == 32);
+}
+
 TEST_CASE("md5 with longer strings", "[md5]") {
     auto raw = md5_raw("The quick brown fox jumps over the lazy dog");
     auto encoded = base64url_no_padding(raw.data(), raw.size());

@@ -14,14 +14,14 @@ static inline void put_le32(uint8_t* buf, uint32_t val) {
     buf[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
 }
 
-int VariantAssigner::assign(const std::vector<double>& split, int seed_hi, int seed_lo) const {
+int VariantAssigner::assign(const std::vector<double>& split, int32_t seed_hi, int32_t seed_lo) const {
     uint8_t buffer[12];
     put_le32(buffer, static_cast<uint32_t>(seed_lo));
     put_le32(buffer + 4, static_cast<uint32_t>(seed_hi));
     put_le32(buffer + 8, unit_hash_);
 
     uint32_t hash = murmur3_32(buffer, 12, 0);
-    double probability = static_cast<double>(hash) / 0xFFFFFFFF;
+    double probability = static_cast<double>(hash) / 0x100000000ULL;
     return choose_variant(split, probability);
 }
 

@@ -32,7 +32,7 @@ private:
     static std::string build_url_with_query(const std::string& url,
                                             const std::map<std::string, std::string>& query);
     static struct curl_slist* build_header_list(const std::map<std::string, std::string>& headers);
-    Response perform_request(CURL* curl);
+    static Response perform_request(CURL* curl);
     static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata);
 };
 

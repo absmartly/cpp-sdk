@@ -52,12 +52,12 @@ struct ExperimentData {
     std::string name;
     std::string unitType;
     int iteration = 0;
-    int seedHi = 0;
-    int seedLo = 0;
+    int32_t seedHi = 0;
+    int32_t seedLo = 0;
     std::vector<double> split;
     bool seedStrictMode = false;
-    int trafficSeedHi = 0;
-    int trafficSeedLo = 0;
+    int32_t trafficSeedHi = 0;
+    int32_t trafficSeedLo = 0;
     std::vector<double> trafficSplit;
     int fullOnVariant = 0;
     nlohmann::json audience;
@@ -200,7 +200,7 @@ inline void from_json(const nlohmann::json& j, Exposure& e) {
 struct GoalAchievement {
     std::string name;
     int64_t achievedAt = 0;
-    std::map<std::string, double> properties;
+    nlohmann::json properties;
 };
 
 inline void to_json(nlohmann::json& j, const GoalAchievement& g) {
@@ -215,11 +215,7 @@ inline void from_json(const nlohmann::json& j, GoalAchievement& g) {
     j.at("name").get_to(g.name);
     j.at("achievedAt").get_to(g.achievedAt);
     if (j.contains("properties")) {
-        for (auto& [key, val] : j.at("properties").items()) {
-            if (val.is_number()) {
-                g.properties[key] = val.get<double>();
-            }
-        }
+        g.properties = j.at("properties");
     }
 }
 

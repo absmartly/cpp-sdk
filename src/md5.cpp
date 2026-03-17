@@ -171,6 +171,7 @@ static void md5_compute(const uint8_t* data, size_t len, uint32_t state_out[4]) 
     }
 
     block[14] = static_cast<uint32_t>(len << 3);
+    block[15] = static_cast<uint32_t>(len >> 29);
     md5cycle(state, block);
 
     state_out[0] = state[0];

@@ -39,7 +39,7 @@ Client::Client(const ClientConfig& config, std::shared_ptr<HTTPClient> http_clie
 std::future<ContextData> Client::get_context_data() {
     auto future_response = http_client_->get(url_, query_, headers_);
 
-    return std::async(std::launch::deferred, [resp_future = std::move(future_response)]() mutable -> ContextData {
+    return std::async(std::launch::async, [resp_future = std::move(future_response)]() mutable -> ContextData {
         auto response = resp_future.get();
 
         if (response.status_code / 100 != 2) {
@@ -64,7 +64,7 @@ std::future<void> Client::publish(const PublishEvent& event) {
 
     auto future_response = http_client_->put(url_, {}, headers_, body);
 
-    return std::async(std::launch::deferred, [resp_future = std::move(future_response)]() mutable {
+    return std::async(std::launch::async, [resp_future = std::move(future_response)]() mutable {
         auto response = resp_future.get();
 
         if (response.status_code / 100 != 2) {

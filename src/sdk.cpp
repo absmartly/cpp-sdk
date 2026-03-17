@@ -57,12 +57,14 @@ std::shared_ptr<SDK> SDK::create_simple(ClientConfig client_config,
 std::unique_ptr<Context> SDK::create_context(const ContextConfig& config) {
     auto data_future = context_data_provider_->get_context_data();
     return std::make_unique<Context>(config, std::move(data_future),
-                                     context_event_handler_, context_event_publisher_);
+                                     context_event_handler_, context_event_publisher_,
+                                     context_data_provider_);
 }
 
 std::unique_ptr<Context> SDK::create_context_with(const ContextConfig& config, ContextData data) {
     return std::make_unique<Context>(config, std::move(data),
-                                     context_event_handler_, context_event_publisher_);
+                                     context_event_handler_, context_event_publisher_,
+                                     context_data_provider_);
 }
 
 std::future<ContextData> SDK::get_context_data() {
