@@ -1,14 +1,14 @@
 #pragma once
 
-#include <absmartly/context_event_publisher.h>
+#include <absmartly/context_publisher.h>
 #include <absmartly/client.h>
 #include <memory>
 
 namespace absmartly {
 
-class DefaultContextEventPublisher : public ContextEventPublisher {
+class DefaultContextPublisher : public ContextPublisher {
 public:
-    explicit DefaultContextEventPublisher(std::shared_ptr<Client> client);
+    explicit DefaultContextPublisher(std::shared_ptr<Client> client);
 
     std::future<void> publish(const PublishEvent& event) override;
 

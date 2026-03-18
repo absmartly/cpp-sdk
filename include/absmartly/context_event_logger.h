@@ -6,9 +6,9 @@ namespace absmartly {
 
 class Context;
 
-class ContextEventHandler {
+class ContextEventLogger {
 public:
-    virtual ~ContextEventHandler() = default;
+    virtual ~ContextEventLogger() = default;
     virtual void handle_event(Context& context, const std::string& event_type, const nlohmann::json& data) = 0;
 };
 

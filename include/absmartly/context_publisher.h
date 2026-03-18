@@ -5,9 +5,9 @@
 
 namespace absmartly {
 
-class ContextEventPublisher {
+class ContextPublisher {
 public:
-    virtual ~ContextEventPublisher() = default;
+    virtual ~ContextPublisher() = default;
     virtual std::future<void> publish(const PublishEvent& event) = 0;
 };
 

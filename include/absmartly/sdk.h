@@ -30,8 +30,8 @@ private:
 
     std::shared_ptr<Client> client_;
     std::shared_ptr<ContextDataProvider> context_data_provider_;
-    std::shared_ptr<ContextEventHandler> context_event_handler_;
-    std::shared_ptr<ContextEventPublisher> context_event_publisher_;
+    std::shared_ptr<ContextEventLogger> context_event_handler_;
+    std::shared_ptr<ContextPublisher> context_event_publisher_;
 };
 
 } // namespace absmartly

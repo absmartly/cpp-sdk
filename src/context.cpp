@@ -20,8 +20,8 @@ static bool array_equals_shallow(const std::vector<double>& a, const std::vector
 }
 
 Context::Context(const ContextConfig& config, ContextData data,
-                 std::shared_ptr<ContextEventHandler> event_handler,
-                 std::shared_ptr<ContextEventPublisher> event_publisher,
+                 std::shared_ptr<ContextEventLogger> event_handler,
+                 std::shared_ptr<ContextPublisher> event_publisher,
                  std::shared_ptr<ContextDataProvider> data_provider)
     : config_(config)
     , event_handler_(std::move(event_handler))
@@ -32,8 +32,8 @@ Context::Context(const ContextConfig& config, ContextData data,
 }
 
 Context::Context(const ContextConfig& config, std::future<ContextData> data_future,
-                 std::shared_ptr<ContextEventHandler> event_handler,
-                 std::shared_ptr<ContextEventPublisher> event_publisher,
+                 std::shared_ptr<ContextEventLogger> event_handler,
+                 std::shared_ptr<ContextPublisher> event_publisher,
                  std::shared_ptr<ContextDataProvider> data_provider)
     : config_(config)
     , event_handler_(std::move(event_handler))

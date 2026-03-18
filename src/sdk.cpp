@@ -2,7 +2,7 @@
 #include "absmartly/client.h"
 #include "absmartly/client_config.h"
 #include "absmartly/default_context_data_provider.h"
-#include "absmartly/default_context_event_publisher.h"
+#include "absmartly/default_context_publisher.h"
 #include "absmartly/default_http_client.h"
 #include "absmartly/async_http_client.h"
 
@@ -25,7 +25,7 @@ SDK::SDK(SDKConfig config)
         }
 
         if (!context_event_publisher_) {
-            context_event_publisher_ = std::make_shared<DefaultContextEventPublisher>(client_);
+            context_event_publisher_ = std::make_shared<DefaultContextPublisher>(client_);
         }
     }
 }

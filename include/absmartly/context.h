@@ -3,8 +3,8 @@
 #include <absmartly/models.h>
 #include <absmartly/context_config.h>
 #include <absmartly/context_data_provider.h>
-#include <absmartly/context_event_handler.h>
-#include <absmartly/context_event_publisher.h>
+#include <absmartly/context_event_logger.h>
+#include <absmartly/context_publisher.h>
 #include <absmartly/audience_matcher.h>
 #include <absmartly/variant_assigner.h>
 #include <absmartly/hashing.h>
@@ -47,13 +47,13 @@ struct ExperimentIndex {
 class Context {
 public:
     Context(const ContextConfig& config, ContextData data,
-            std::shared_ptr<ContextEventHandler> event_handler = nullptr,
-            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr,
+            std::shared_ptr<ContextEventLogger> event_handler = nullptr,
+            std::shared_ptr<ContextPublisher> event_publisher = nullptr,
             std::shared_ptr<ContextDataProvider> data_provider = nullptr);
 
     Context(const ContextConfig& config, std::future<ContextData> data_future,
-            std::shared_ptr<ContextEventHandler> event_handler = nullptr,
-            std::shared_ptr<ContextEventPublisher> event_publisher = nullptr,
+            std::shared_ptr<ContextEventLogger> event_handler = nullptr,
+            std::shared_ptr<ContextPublisher> event_publisher = nullptr,
             std::shared_ptr<ContextDataProvider> data_provider = nullptr);
 
     void wait_until_ready();
@@ -153,8 +153,8 @@ private:
     std::map<std::string, std::string> hashes_;
     std::map<std::string, VariantAssigner> assigners_;
 
-    std::shared_ptr<ContextEventHandler> event_handler_;
-    std::shared_ptr<ContextEventPublisher> event_publisher_;
+    std::shared_ptr<ContextEventLogger> event_handler_;
+    std::shared_ptr<ContextPublisher> event_publisher_;
     std::shared_ptr<ContextDataProvider> data_provider_;
 
     std::future<ContextData> data_future_;

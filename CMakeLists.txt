@@ -20,7 +20,7 @@ add_library(absmartly-sdk
   src/context.cpp
   src/client.cpp
   src/default_context_data_provider.cpp
-  src/default_context_event_publisher.cpp
+  src/default_context_publisher.cpp
   src/sdk.cpp
   src/json_expr/evaluator.cpp
   src/json_expr/operators.cpp

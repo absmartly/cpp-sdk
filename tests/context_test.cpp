@@ -269,7 +269,7 @@ static ContextConfig make_test_config() {
     return config;
 }
 
-class MockEventHandler : public ContextEventHandler {
+class MockEventHandler : public ContextEventLogger {
 public:
     struct Event {
         std::string type;
@@ -1697,7 +1697,7 @@ TEST_CASE("Fix: redundant data copy removed in init", "[context][fix9]") {
 }
 
 TEST_CASE("Fix: publish calls event_publisher", "[context][fix36]") {
-    class MockPublisher : public ContextEventPublisher {
+    class MockPublisher : public ContextPublisher {
     public:
         int call_count = 0;
         PublishEvent last_event;
@@ -1724,7 +1724,7 @@ TEST_CASE("Fix: publish calls event_publisher", "[context][fix36]") {
 }
 
 TEST_CASE("Fix: finalize calls event_publisher", "[context][fix36]") {
-    class MockPublisher : public ContextEventPublisher {
+    class MockPublisher : public ContextPublisher {
     public:
         int call_count = 0;
         std::future<void> publish(const PublishEvent& event) override {
