@@ -7,6 +7,10 @@ namespace absmartly {
 
 Client::Client(const ClientConfig& config, std::shared_ptr<HTTPClient> http_client)
     : http_client_(std::move(http_client)) {
+    if (!http_client_) {
+        throw std::invalid_argument("http_client must not be null");
+    }
+
     if (config.endpoint.empty()) {
         throw std::invalid_argument("Missing endpoint configuration");
     }

@@ -27,6 +27,16 @@ AsyncHTTPClient::~AsyncHTTPClient() {
         worker_.join();
     }
 
+    for (auto* req : pending_queue_) {
+        if (req->headers) {
+            curl_slist_free_all(req->headers);
+        }
+        curl_easy_cleanup(req->easy);
+        req->promise.set_value({0, "Client shutting down", "", {}});
+        delete req;
+    }
+    pending_queue_.clear();
+
     for (auto& [easy, req] : active_requests_) {
         curl_multi_remove_handle(multi_, easy);
         if (req->headers) {
@@ -142,8 +152,17 @@ void AsyncHTTPClient::event_loop() {
                 break;
             }
             for (auto* req : pending_queue_) {
-                curl_multi_add_handle(multi_, req->easy);
-                active_requests_[req->easy] = req;
+                CURLMcode mc = curl_multi_add_handle(multi_, req->easy);
+                if (mc != CURLM_OK) {
+                    if (req->headers) {
+                        curl_slist_free_all(req->headers);
+                    }
+                    curl_easy_cleanup(req->easy);
+                    req->promise.set_value({0, curl_multi_strerror(mc), "", {}});
+                    delete req;
+                } else {
+                    active_requests_[req->easy] = req;
+                }
             }
             pending_queue_.clear();
         }

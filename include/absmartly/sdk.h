@@ -6,6 +6,7 @@
 #include <absmartly/context_config.h>
 #include <absmartly/http_client.h>
 #include <absmartly/http_mode.h>
+#include <future>
 #include <memory>
 
 namespace absmartly {

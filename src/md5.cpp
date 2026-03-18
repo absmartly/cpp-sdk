@@ -1,4 +1,5 @@
 #include "absmartly/hashing.h"
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
 
@@ -170,8 +171,9 @@ static void md5_compute(const uint8_t* data, size_t len, uint32_t state_out[4]) 
         block[w] = 0;
     }
 
-    block[14] = static_cast<uint32_t>(len << 3);
-    block[15] = static_cast<uint32_t>(len >> 29);
+    const uint64_t bit_len = static_cast<uint64_t>(len) << 3;
+    block[14] = static_cast<uint32_t>(bit_len & 0xFFFFFFFFu);
+    block[15] = static_cast<uint32_t>(bit_len >> 32);
     md5cycle(state, block);
 
     state_out[0] = state[0];

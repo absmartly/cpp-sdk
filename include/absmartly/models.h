@@ -44,6 +44,8 @@ inline void from_json(const nlohmann::json& j, CustomFieldValue& v) {
     j.at("type").get_to(v.type);
     if (j.contains("value") && !j.at("value").is_null()) {
         v.value = j.at("value").get<std::string>();
+    } else {
+        v.value = std::nullopt;
     }
 }
 

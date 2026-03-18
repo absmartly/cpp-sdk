@@ -36,7 +36,7 @@ target_link_libraries(absmartly-sdk PUBLIC nlohmann_json::nlohmann_json)
 
 find_package(CURL REQUIRED)
 target_sources(absmartly-sdk PRIVATE src/default_http_client.cpp src/async_http_client.cpp)
-target_link_libraries(absmartly-sdk PRIVATE CURL::libcurl)
+target_link_libraries(absmartly-sdk PUBLIC CURL::libcurl)
 
 option(ABSMARTLY_BUILD_TESTS "Build tests" ON)
 if(ABSMARTLY_BUILD_TESTS)

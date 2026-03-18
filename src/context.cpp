@@ -2,7 +2,9 @@
 #include "absmartly/errors.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cmath>
 
 namespace absmartly {
 
@@ -339,13 +341,12 @@ nlohmann::json Context::custom_field_value(const std::string& experiment_name, c
                 return val;
             }
             if (field.type == "number") {
-                try {
-                    return std::stod(val);
-                } catch (const std::invalid_argument&) {
-                    return nullptr;
-                } catch (const std::out_of_range&) {
-                    return nullptr;
+                double result = 0.0;
+                auto [ptr, ec] = std::from_chars(val.data(), val.data() + val.size(), result);
+                if (ec == std::errc{} && ptr == val.data() + val.size() && std::isfinite(result)) {
+                    return result;
                 }
+                return nullptr;
             }
             if (field.type == "json") {
                 try {

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <charconv>
+#include <locale>
 #include <sstream>
 #include <iomanip>
 
@@ -86,13 +87,10 @@ std::optional<double> Evaluator::to_number(const nlohmann::json& value) {
         if (str.empty()) {
             return std::nullopt;
         }
-        try {
-            std::size_t pos = 0;
-            double result = std::stod(str, &pos);
-            if (pos == str.size() && std::isfinite(result)) {
-                return result;
-            }
-        } catch (...) {
+        double result = 0.0;
+        auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+        if (ec == std::errc{} && ptr == str.data() + str.size() && std::isfinite(result)) {
+            return result;
         }
         return std::nullopt;
     }
@@ -114,10 +112,12 @@ std::optional<std::string> Evaluator::to_string_value(const nlohmann::json& valu
         double int_part;
         if (std::modf(d, &int_part) == 0.0 && std::abs(d) < 1e15) {
             std::ostringstream oss;
+            oss.imbue(std::locale::classic());
             oss << std::fixed << std::setprecision(0) << d;
             return oss.str();
         }
         std::ostringstream oss;
+        oss.imbue(std::locale::classic());
         oss << std::setprecision(15) << d;
         std::string result = oss.str();
         return result;
