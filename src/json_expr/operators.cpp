@@ -201,12 +201,12 @@ nlohmann::json InOperator::evaluate(
     if (!args.is_array()) {
         return nullptr;
     }
-    auto needle = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
-    if (needle.is_null()) {
+    auto haystack = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
+    if (haystack.is_null()) {
         return nullptr;
     }
-    auto haystack = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
-    if (haystack.is_null()) {
+    auto needle = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
+    if (needle.is_null()) {
         return nullptr;
     }
 

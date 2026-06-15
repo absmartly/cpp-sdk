@@ -357,41 +357,43 @@ TEST_CASE("InOperator", "[operators][in]") {
     Evaluator evaluator;
     json vars = {};
 
+    // Operand order is haystack-first: [haystack, needle].
+
     SECTION("string containment") {
-        json expr = {{"in", json::array({json{{"value", "abc"}}, json{{"value", "abcdefghijk"}}})}};
+        json expr = {{"in", json::array({json{{"value", "abcdefghijk"}}, json{{"value", "abc"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
 
-        expr = {{"in", json::array({json{{"value", "def"}}, json{{"value", "abcdefghijk"}}})}};
+        expr = {{"in", json::array({json{{"value", "abcdefghijk"}}, json{{"value", "def"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
 
-        expr = {{"in", json::array({json{{"value", "xxx"}}, json{{"value", "abcdefghijk"}}})}};
+        expr = {{"in", json::array({json{{"value", "abcdefghijk"}}, json{{"value", "xxx"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
     }
 
     SECTION("null needle or haystack returns null") {
-        json expr = {{"in", json::array({json{{"value", nullptr}}, json{{"value", "abcdefghijk"}}})}};
+        json expr = {{"in", json::array({json{{"value", "abcdefghijk"}}, json{{"value", nullptr}}})}};
         REQUIRE(evaluator.evaluate(expr, vars).is_null());
 
-        expr = {{"in", json::array({json{{"value", "abc"}}, json{{"value", nullptr}}})}};
+        expr = {{"in", json::array({json{{"value", nullptr}}, json{{"value", "abc"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars).is_null());
     }
 
     SECTION("empty array returns false") {
-        json expr = {{"in", json::array({json{{"value", 1}}, json{{"value", json::array()}}})}};
+        json expr = {{"in", json::array({json{{"value", json::array()}}, json{{"value", 1}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", "1"}}, json{{"value", json::array()}}})}};
+        expr = {{"in", json::array({json{{"value", json::array()}}, json{{"value", "1"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", true}}, json{{"value", json::array()}}})}};
+        expr = {{"in", json::array({json{{"value", json::array()}}, json{{"value", true}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", false}}, json{{"value", json::array()}}})}};
+        expr = {{"in", json::array({json{{"value", json::array()}}, json{{"value", false}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
     }
 
     SECTION("null needle with array returns null") {
-        json expr = {{"in", json::array({json{{"value", nullptr}}, json{{"value", json::array()}}})}};
+        json expr = {{"in", json::array({json{{"value", json::array()}}, json{{"value", nullptr}}})}};
         REQUIRE(evaluator.evaluate(expr, vars).is_null());
     }
 
@@ -399,16 +401,16 @@ TEST_CASE("InOperator", "[operators][in]") {
         json haystack01 = json::array({0, 1});
         json haystack12 = json::array({1, 2});
 
-        json expr = {{"in", json::array({json{{"value", 2}}, json{{"value", haystack01}}})}};
+        json expr = {{"in", json::array({json{{"value", haystack01}}, json{{"value", 2}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", 0}}, json{{"value", haystack12}}})}};
+        expr = {{"in", json::array({json{{"value", haystack12}}, json{{"value", 0}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", 1}}, json{{"value", haystack12}}})}};
+        expr = {{"in", json::array({json{{"value", haystack12}}, json{{"value", 1}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
 
-        expr = {{"in", json::array({json{{"value", 2}}, json{{"value", haystack12}}})}};
+        expr = {{"in", json::array({json{{"value", haystack12}}, json{{"value", 2}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
     }
 
@@ -416,20 +418,32 @@ TEST_CASE("InOperator", "[operators][in]") {
         json haystackab = json{{"a", 1}, {"b", 2}};
         json haystackbc = json{{"b", 2}, {"c", 3}, {"0", 100}};
 
-        json expr = {{"in", json::array({json{{"value", "c"}}, json{{"value", haystackab}}})}};
+        json expr = {{"in", json::array({json{{"value", haystackab}}, json{{"value", "c"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", "a"}}, json{{"value", haystackbc}}})}};
+        expr = {{"in", json::array({json{{"value", haystackbc}}, json{{"value", "a"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == false);
 
-        expr = {{"in", json::array({json{{"value", "b"}}, json{{"value", haystackbc}}})}};
+        expr = {{"in", json::array({json{{"value", haystackbc}}, json{{"value", "b"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
 
-        expr = {{"in", json::array({json{{"value", "c"}}, json{{"value", haystackbc}}})}};
+        expr = {{"in", json::array({json{{"value", haystackbc}}, json{{"value", "c"}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
 
-        expr = {{"in", json::array({json{{"value", 0}}, json{{"value", haystackbc}}})}};
+        expr = {{"in", json::array({json{{"value", haystackbc}}, json{{"value", 0}}})}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
+    }
+
+    SECTION("contains is an alias for in (haystack-first)") {
+        json haystack = json::array({1, 2, 3});
+        json expr = {{"contains", json::array({json{{"value", haystack}}, json{{"value", 2}}})}};
+        REQUIRE(evaluator.evaluate(expr, vars) == true);
+
+        expr = {{"contains", json::array({json{{"value", "abcdefghijk"}}, json{{"value", "abc"}}})}};
+        REQUIRE(evaluator.evaluate(expr, vars) == true);
+
+        expr = {{"contains", json::array({json{{"value", haystack}}, json{{"value", 4}}})}};
+        REQUIRE(evaluator.evaluate(expr, vars) == false);
     }
 }
 

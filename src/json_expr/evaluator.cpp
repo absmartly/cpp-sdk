@@ -21,6 +21,7 @@ Evaluator::Evaluator() {
     operators_["lt"] = std::make_unique<LtOperator>();
     operators_["lte"] = std::make_unique<LteOperator>();
     operators_["in"] = std::make_unique<InOperator>();
+    operators_["contains"] = std::make_unique<InOperator>();
     operators_["match"] = std::make_unique<MatchOperator>();
 }
 
