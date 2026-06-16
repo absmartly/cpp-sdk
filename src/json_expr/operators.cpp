@@ -93,7 +93,13 @@ nlohmann::json EqOperator::evaluate(
         return nullptr;
     }
     auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
+    if (lhs.is_null()) {
+        return nullptr;
+    }
     auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
+    if (rhs.is_null()) {
+        return nullptr;
+    }
     auto result = Evaluator::compare(lhs, rhs);
     if (result.has_value()) {
         return *result == 0;
