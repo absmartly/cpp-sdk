@@ -61,9 +61,14 @@ std::future<HTTPClient::Response> DefaultHTTPClient::put(const std::string& url,
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         std::string full_url = build_url_with_query(url, query);
         curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
-        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-        curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, reinterpret_cast<const char*>(body.data()));
+        // Set the request body BEFORE overriding the method. If CURLOPT_CUSTOMREQUEST
+        // is set first, libcurl puts the transfer into upload (read-callback) mode and
+        // fails the request with CURLE_READ_ERROR when only POSTFIELDS are supplied.
+        // Supplying the post fields first makes this a body-bearing request that
+        // CUSTOMREQUEST then simply relabels as "PUT".
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+        curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, reinterpret_cast<const char*>(body.data()));
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
 
         struct curl_slist* header_list = build_header_list(headers);
         if (header_list) {

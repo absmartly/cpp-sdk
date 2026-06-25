@@ -82,10 +82,13 @@ std::future<HTTPClient::Response> AsyncHTTPClient::put(
     }
 
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, "PUT");
 
     std::vector<uint8_t> body_copy(body);
-    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), std::move(body_copy));
+    // The "PUT" method override is applied inside enqueue() AFTER the request body
+    // is set. Setting CURLOPT_CUSTOMREQUEST before CURLOPT_POSTFIELDS makes libcurl
+    // switch to upload (read-callback) mode and fail with CURLE_READ_ERROR.
+    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers),
+                   std::move(body_copy), "PUT");
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::post(
@@ -109,7 +112,8 @@ std::future<HTTPClient::Response> AsyncHTTPClient::post(
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
-    CURL* easy, std::string url, struct curl_slist* header_list, std::vector<uint8_t> request_body) {
+    CURL* easy, std::string url, struct curl_slist* header_list, std::vector<uint8_t> request_body,
+    const char* method_override) {
 
     auto* req = new PendingRequest();
     req->easy = easy;
@@ -128,6 +132,11 @@ std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
     if (!req->request_body.empty()) {
         curl_easy_setopt(easy, CURLOPT_POSTFIELDS, req->request_body.data());
         curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, static_cast<long>(req->request_body.size()));
+    }
+
+    // Apply any custom method (e.g. "PUT") only after the body has been configured.
+    if (method_override) {
+        curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method_override);
     }
 
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_callback);

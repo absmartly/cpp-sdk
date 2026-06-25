@@ -44,7 +44,8 @@ private:
 
     std::future<Response> enqueue(CURL* easy, std::string url,
                                    struct curl_slist* header_list,
-                                   std::vector<uint8_t> request_body);
+                                   std::vector<uint8_t> request_body,
+                                   const char* method_override = nullptr);
     void event_loop();
     void process_completed();
 
