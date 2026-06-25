@@ -13,6 +13,7 @@ add_executable(absmartly_tests
   operators_test.cpp
   audience_matcher_test.cpp
   context_test.cpp
+  http_integration_test.cpp
 )
 
 target_link_libraries(absmartly_tests PRIVATE absmartly-sdk Catch2::Catch2WithMain)
