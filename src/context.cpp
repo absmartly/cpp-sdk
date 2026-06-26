@@ -447,7 +447,14 @@ PublishEvent Context::publish() {
     pending_ = 0;
 
     if (event_publisher_) {
-        event_publisher_->publish(event);
+        // Block until the publish HTTP request actually completes. The publisher
+        // returns a std::future for the in-flight request; discarding it here
+        // abandoned the request (events never reached the collector). publish()
+        // is synchronous, so wait for the result.
+        std::future<void> publish_future = event_publisher_->publish(event);
+        if (publish_future.valid()) {
+            publish_future.get();
+        }
     }
 
     nlohmann::json pub_data = event;

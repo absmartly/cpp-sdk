@@ -27,7 +27,11 @@ Client::Client(const ClientConfig& config, std::shared_ptr<HTTPClient> http_clie
         throw std::invalid_argument("Missing environment configuration");
     }
 
-    url_ = config.endpoint + "/v1/context";
+    // The configured endpoint already includes the API version prefix (e.g.
+    // https://host/v1); the SDK appends only "/context", matching every other
+    // SDK and the wire contract. Appending "/v1/context" produced "/v1/v1/context"
+    // (404) against a versioned endpoint.
+    url_ = config.endpoint + "/context";
 
     headers_["X-API-Key"] = config.api_key;
     headers_["X-Application"] = config.application;

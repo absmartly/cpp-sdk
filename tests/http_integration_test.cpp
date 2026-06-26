@@ -11,9 +11,9 @@
 //                             X-Application-Version / X-Agent / Content-Type
 //                             and a body containing hashed / units / publishedAt.
 //
-// NOTE: the C++ Client appends "/v1/context" to the configured endpoint, so the
-// server is mounted at /v1/context here (the wire contract's "/v1" lives in the
-// endpoint base in production). We assert the path the SDK actually requests.
+// NOTE: the C++ Client appends "/context" to the configured endpoint (the wire
+// contract's "/v1" lives in the endpoint base in production). We assert the path
+// the SDK actually requests.
 //
 // The server is a tiny single-threaded blocking-socket implementation so the
 // test stays hermetic with no extra dependency (it reuses libcurl, already a
@@ -249,14 +249,14 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     // ---- GET /context (fetch -> ready) ----
     const auto& get = requests[0];
     REQUIRE(get.method == "GET");
-    REQUIRE(get.path.rfind("/v1/context", 0) == 0); // path starts with /v1/context
+    REQUIRE(get.path.rfind("/context", 0) == 0); // path starts with /context
     REQUIRE(get.path.find("application=www") != std::string::npos);
     REQUIRE(get.path.find("environment=test") != std::string::npos);
 
     // ---- PUT /context (publish) ----
     const auto& put = requests[1];
     REQUIRE(put.method == "PUT");
-    REQUIRE(put.path.rfind("/v1/context", 0) == 0);
+    REQUIRE(put.path.rfind("/context", 0) == 0);
     // No query params on the PUT path.
     REQUIRE(put.path.find('?') == std::string::npos);
 
