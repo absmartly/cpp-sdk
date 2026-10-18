@@ -5,6 +5,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 
 namespace absmartly {
 
@@ -19,6 +20,13 @@ static bool array_equals_shallow(const std::vector<double>& a, const std::vector
         if (a[i] != b[i]) return false;
     }
     return true;
+}
+
+template <typename T>
+static void prepend_all(std::vector<T>& queue, std::vector<T>& items) {
+    queue.insert(queue.begin(),
+                 std::make_move_iterator(items.begin()),
+                 std::make_move_iterator(items.end()));
 }
 
 Context::Context(const ContextConfig& config, ContextData data,
@@ -432,28 +440,47 @@ PublishEvent Context::publish() {
         event.units.push_back(std::move(u));
     }
 
-    if (!exposures_.empty()) {
-        event.exposures = std::move(exposures_);
-    }
+    event.exposures = std::move(exposures_);
+    exposures_.clear();
 
-    if (!goals_.empty()) {
-        event.goals = std::move(goals_);
-    }
+    event.goals = std::move(goals_);
+    goals_.clear();
 
     if (!attrs_.empty()) {
         event.attributes = attrs_;
     }
 
+    const int published = pending_;
     pending_ = 0;
 
     if (event_publisher_) {
+        // A failed publish must not lose events: put them back at the front of
+        // the queues (ahead of any event a re-entrant handler queued) and
+        // restore the pending count, so a later publish() or finalize()
+        // retries them. The error is then rethrown to the caller.
+        auto requeue = [&]() {
+            prepend_all(exposures_, event.exposures);
+            prepend_all(goals_, event.goals);
+            pending_ += published;
+        };
+
         // Block until the publish HTTP request actually completes. The publisher
         // returns a std::future for the in-flight request; discarding it here
         // abandoned the request (events never reached the collector). publish()
         // is synchronous, so wait for the result.
-        std::future<void> publish_future = event_publisher_->publish(event);
-        if (publish_future.valid()) {
-            publish_future.get();
+        try {
+            std::future<void> publish_future = event_publisher_->publish(event);
+            if (publish_future.valid()) {
+                publish_future.get();
+            }
+        } catch (const std::exception& e) {
+            requeue();
+            emit_event("error", {{"message", e.what()}});
+            throw;
+        } catch (...) {
+            requeue();
+            emit_event("error", {{"message", "Unknown publish error"}});
+            throw;
         }
     }
 
@@ -469,7 +496,15 @@ PublishEvent Context::finalize() {
     }
 
     finalizing_ = true;
-    auto result = publish();
+    PublishEvent result;
+    try {
+        result = publish();
+    } catch (...) {
+        // publish() has requeued the events. Leave the context open so the
+        // caller can retry finalize() instead of being stuck in "finalizing".
+        finalizing_ = false;
+        throw;
+    }
     finalized_ = true;
     finalizing_ = false;
 

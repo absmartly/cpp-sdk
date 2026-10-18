@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <absmartly/context.h>
 #include <absmartly/errors.h>
 
@@ -1987,4 +1988,207 @@ TEST_CASE("unit UID blank error message", "[context][errors]") {
     } catch (const std::exception& e) {
         REQUIRE(std::string(e.what()) == "Unit 'new_unit' UID must not be blank.");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Publish failure semantics (cross-SDK scenario 193): a failed publish must not
+// lose pending events. They are requeued so a later publish() or finalize()
+// can deliver them, and the failure is surfaced to the caller.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Publisher whose outcome per call is scripted. Calls beyond the script
+// succeed. Every event handed to the publisher is recorded.
+class ScriptedPublisher : public ContextPublisher {
+public:
+    enum class Outcome { Succeed, FailFuture, ThrowSync };
+
+    explicit ScriptedPublisher(std::vector<Outcome> script = {}) : script_(std::move(script)) {}
+
+    std::future<void> publish(const PublishEvent& event) override {
+        received.push_back(event);
+        Outcome outcome = next_ < script_.size() ? script_[next_] : Outcome::Succeed;
+        ++next_;
+
+        if (outcome == Outcome::ThrowSync) {
+            throw std::runtime_error("Publish failed");
+        }
+
+        std::promise<void> p;
+        if (outcome == Outcome::FailFuture) {
+            p.set_exception(std::make_exception_ptr(std::runtime_error("Publish failed")));
+        } else {
+            p.set_value();
+        }
+        return p.get_future();
+    }
+
+    std::vector<PublishEvent> received;
+
+private:
+    std::vector<Outcome> script_;
+    size_t next_ = 0;
+};
+
+using Outcome = ScriptedPublisher::Outcome;
+
+} // namespace
+
+TEST_CASE("Publish failure preserves pending events", "[context][publishfail]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+    auto handler = std::make_shared<MockEventHandler>();
+
+    SECTION("failed publish future rethrows and keeps pending count") {
+        auto publisher = std::make_shared<ScriptedPublisher>(std::vector<Outcome>{Outcome::FailFuture});
+        Context ctx(config, data, handler, publisher);
+        ctx.treatment("exp_test_ab");
+        ctx.track("goal1", {{"amount", 125}});
+        REQUIRE(ctx.pending() == 2);
+
+        handler->clear();
+        REQUIRE_THROWS_WITH(ctx.publish(), "Publish failed");
+
+        REQUIRE(publisher->received.size() == 1);
+        REQUIRE(ctx.pending() == 2);
+        REQUIRE(handler->count_events("publish") == 0);
+        REQUIRE(handler->count_events("error") == 1);
+        REQUIRE(handler->events.back().data["message"] == "Publish failed");
+    }
+
+    SECTION("publisher throwing synchronously keeps pending count") {
+        auto publisher = std::make_shared<ScriptedPublisher>(std::vector<Outcome>{Outcome::ThrowSync});
+        Context ctx(config, data, handler, publisher);
+        ctx.treatment("exp_test_ab");
+        REQUIRE(ctx.pending() == 1);
+
+        handler->clear();
+        REQUIRE_THROWS_WITH(ctx.publish(), "Publish failed");
+
+        REQUIRE(ctx.pending() == 1);
+        REQUIRE(handler->count_events("publish") == 0);
+        REQUIRE(handler->count_events("error") == 1);
+    }
+
+    SECTION("scenario 193: exposure, failed publish, pending still 1") {
+        ContextConfig cfg;
+        cfg.publish_delay = -1;
+        cfg.refresh_period = 0;
+        cfg.units = {{"session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}};
+
+        auto publisher = std::make_shared<ScriptedPublisher>(std::vector<Outcome>{Outcome::FailFuture});
+        Context ctx(cfg, data, handler, publisher);
+        REQUIRE(ctx.treatment("exp_test_ab") == 1);
+        REQUIRE(ctx.pending() == 1);
+
+        REQUIRE_THROWS_WITH(ctx.publish(), "Publish failed");
+        REQUIRE(ctx.pending() == 1);
+    }
+
+    SECTION("requeued exposure is not duplicated by a repeat treatment call") {
+        auto publisher = std::make_shared<ScriptedPublisher>(std::vector<Outcome>{Outcome::FailFuture});
+        Context ctx(config, data, handler, publisher);
+        ctx.treatment("exp_test_ab");
+        REQUIRE_THROWS(ctx.publish());
+
+        ctx.treatment("exp_test_ab");
+        REQUIRE(ctx.pending() == 1);
+    }
+}
+
+TEST_CASE("Publish retry after failure delivers the original events", "[context][publishfail]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+    auto handler = std::make_shared<MockEventHandler>();
+    auto publisher = std::make_shared<ScriptedPublisher>(std::vector<Outcome>{Outcome::FailFuture});
+
+    Context ctx(config, data, handler, publisher);
+    ctx.treatment("exp_test_ab");
+    ctx.track("goal1", {{"amount", 125}});
+    REQUIRE_THROWS_WITH(ctx.publish(), "Publish failed");
+
+    const PublishEvent failed = publisher->received.at(0);
+    REQUIRE(failed.exposures.size() == 1);
+    REQUIRE(failed.goals.size() == 1);
+
+    // Events queued after the failure go after the requeued ones.
+    ctx.track("goal2");
+    REQUIRE(ctx.pending() == 3);
+
+    handler->clear();
+    auto event = ctx.publish();
+
+    REQUIRE(publisher->received.size() == 2);
+    REQUIRE(ctx.pending() == 0);
+    REQUIRE(handler->count_events("publish") == 1);
+    REQUIRE(handler->count_events("error") == 0);
+
+    REQUIRE(event.exposures.size() == 1);
+    REQUIRE(event.exposures[0].name == "exp_test_ab");
+    REQUIRE(event.exposures[0].exposedAt == failed.exposures[0].exposedAt);
+
+    REQUIRE(event.goals.size() == 2);
+    REQUIRE(event.goals[0].name == "goal1");
+    REQUIRE(event.goals[0].achievedAt == failed.goals[0].achievedAt);
+    REQUIRE(event.goals[0].properties == failed.goals[0].properties);
+    REQUIRE(event.goals[1].name == "goal2");
+
+    // The successfully published batch is gone; nothing is sent twice.
+    REQUIRE(ctx.publish().units.empty());
+    REQUIRE(publisher->received.size() == 2);
+}
+
+TEST_CASE("Publish success with a publisher clears pending as before", "[context][publishfail]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+    auto handler = std::make_shared<MockEventHandler>();
+    auto publisher = std::make_shared<ScriptedPublisher>();
+
+    Context ctx(config, data, handler, publisher);
+    ctx.treatment("exp_test_ab");
+    ctx.track("goal1");
+
+    handler->clear();
+    auto event = ctx.publish();
+
+    REQUIRE(publisher->received.size() == 1);
+    REQUIRE(event.exposures.size() == 1);
+    REQUIRE(event.goals.size() == 1);
+    REQUIRE(ctx.pending() == 0);
+    REQUIRE(handler->count_events("publish") == 1);
+    REQUIRE(handler->count_events("error") == 0);
+
+    REQUIRE(ctx.publish().units.empty());
+    REQUIRE(publisher->received.size() == 1);
+}
+
+TEST_CASE("Finalize failure keeps the context open with pending events", "[context][publishfail]") {
+    auto data = make_test_data();
+    auto config = make_test_config();
+    auto handler = std::make_shared<MockEventHandler>();
+    auto publisher = std::make_shared<ScriptedPublisher>(std::vector<Outcome>{Outcome::FailFuture});
+
+    Context ctx(config, data, handler, publisher);
+    ctx.treatment("exp_test_ab");
+    REQUIRE(ctx.pending() == 1);
+
+    handler->clear();
+    REQUIRE_THROWS_WITH(ctx.finalize(), "Publish failed");
+
+    REQUIRE_FALSE(ctx.is_finalized());
+    REQUIRE_FALSE(ctx.is_finalizing());
+    REQUIRE(ctx.pending() == 1);
+    REQUIRE(handler->count_events("finalize") == 0);
+    REQUIRE_NOTHROW(ctx.track("goal1"));
+    REQUIRE(ctx.pending() == 2);
+
+    auto result = ctx.finalize();
+
+    REQUIRE(ctx.is_finalized());
+    REQUIRE(ctx.pending() == 0);
+    REQUIRE(result.exposures.size() == 1);
+    REQUIRE(result.goals.size() == 1);
+    REQUIRE(publisher->received.size() == 2);
+    REQUIRE(handler->count_events("finalize") == 1);
 }
