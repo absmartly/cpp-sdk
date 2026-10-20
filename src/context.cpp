@@ -534,13 +534,19 @@ void Context::refresh(const ContextData& new_data) {
     hashes_.clear();
     assigners_.clear();
 
-    for (auto& [name, assignment] : assignments_) {
-        if (assignment.overridden) {
-            auto exp_it = index_.find(name);
-            if (exp_it != index_.end() && exp_it->second.data->id != assignment.id) {
-                assignment.exposed = false;
+    for (auto it = assignments_.begin(); it != assignments_.end();) {
+        if (it->second.overridden) {
+            auto exp_it = index_.find(it->first);
+            bool experiment_gone = exp_it == index_.end();
+            bool changed = !experiment_gone && exp_it->second.data->id != it->second.id;
+            // Evict so the next lookup rebuilds the override from the refreshed
+            // experiment metadata (new id/variables) and re-queues its exposure.
+            if (changed || (experiment_gone && it->second.id != 0)) {
+                it = assignments_.erase(it);
+                continue;
             }
         }
+        ++it;
     }
 
     nlohmann::json refresh_data;

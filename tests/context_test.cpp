@@ -2192,3 +2192,33 @@ TEST_CASE("Finalize failure keeps the context open with pending events", "[conte
     REQUIRE(publisher->received.size() == 2);
     REQUIRE(handler->count_events("finalize") == 1);
 }
+
+TEST_CASE("Context refresh rebuilds overridden assignment with new experiment id", "[context][refresh]") {
+    auto make_data = [](int id) {
+        ContextData d;
+        ExperimentData e;
+        e.id = id;
+        e.name = "example";
+        e.unitType = "user_id";
+        e.iteration = 1;
+        e.split = {0.5, 0.5};
+        e.trafficSplit = {0.0, 1.0};
+        e.trafficSeedHi = 1;
+        e.trafficSeedLo = 2;
+        e.seedHi = 3;
+        e.seedLo = 4;
+        e.variants = {ExperimentVariant{}, ExperimentVariant{}};
+        d.experiments.push_back(e);
+        return d;
+    };
+    ContextConfig cfg;
+    cfg.units = {{"user_id", "u1"}};
+    Context ctx(cfg, make_data(1));
+    ctx.set_override("example", 1);
+    REQUIRE(ctx.treatment("example") == 1);
+    ctx.refresh(make_data(99));
+    REQUIRE(ctx.treatment("example") == 1);
+    auto ev = ctx.publish();
+    REQUIRE(ev.exposures.size() == 2);
+    REQUIRE(ev.exposures.back().id == 99);
+}
