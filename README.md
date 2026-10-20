@@ -63,12 +63,12 @@ This example assumes an Api Key, an Application, and an Environment have been cr
 #include <absmartly/sdk.h>
 
 int main() {
-    auto sdk = absmartly::SDK::create_simple({
-        .endpoint = "https://your-company.absmartly.io/v1",
-        .api_key = "YOUR_API_KEY",
-        .application = "website",
-        .environment = "production"
-    });
+    absmartly::ClientConfig client_config;
+    client_config.endpoint = "https://your-company.absmartly.io/v1";
+    client_config.api_key = "YOUR_API_KEY";
+    client_config.application = "website";
+    client_config.environment = "production";
+    auto sdk = absmartly::SDK::create_simple(client_config);
 
     absmartly::ContextConfig ctx_config;
     ctx_config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
@@ -93,7 +93,7 @@ For use cases with custom HTTP clients or providers:
 
 int main() {
     absmartly::ClientConfig client_config;
-    client_config.endpoint = "https://your-company.absmartly.io";
+    client_config.endpoint = "https://your-company.absmartly.io/v1";
     client_config.api_key = "YOUR_API_KEY";
     client_config.application = "website";
     client_config.environment = "production";
@@ -167,9 +167,9 @@ absmartly::Context context(config, data);
 To handle SDK events, provide a custom event handler:
 
 ```cpp
-#include <absmartly/context_event_handler.h>
+#include <absmartly/context_event_logger.h>
 
-class MyEventHandler : public absmartly::ContextEventHandler {
+class MyEventHandler : public absmartly::ContextEventLogger {
 public:
     void handle_event(absmartly::Context& context,
                       const std::string& event_type,
@@ -202,12 +202,12 @@ absmartly::Context context(config, data, event_handler);
 ### Asynchronously (Recommended)
 
 ```cpp
-auto sdk = absmartly::SDK::create_simple({
-    .endpoint = "https://your-company.absmartly.io/v1",
-    .api_key = "YOUR_API_KEY",
-    .application = "website",
-    .environment = "production"
-});
+absmartly::ClientConfig client_config;
+client_config.endpoint = "https://your-company.absmartly.io/v1";
+client_config.api_key = "YOUR_API_KEY";
+client_config.application = "website";
+client_config.environment = "production";
+auto sdk = absmartly::SDK::create_simple(client_config);
 
 absmartly::ContextConfig ctx_config;
 ctx_config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
@@ -428,10 +428,10 @@ In C++, you can use RAII patterns to ensure the context is properly finalized:
 
 ### Custom Event Handler
 
-The A/B Smartly SDK can be instantiated with an event handler. Implement the `ContextEventHandler` interface to receive SDK lifecycle events.
+The A/B Smartly SDK can be instantiated with an event handler. Implement the `ContextEventLogger` interface to receive SDK lifecycle events.
 
 ```cpp
-class CustomEventHandler : public absmartly::ContextEventHandler {
+class CustomEventHandler : public absmartly::ContextEventLogger {
 public:
     void handle_event(absmartly::Context& context,
                       const std::string& event_type,
