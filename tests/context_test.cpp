@@ -2222,3 +2222,28 @@ TEST_CASE("Context refresh rebuilds overridden assignment with new experiment id
     REQUIRE(ev.exposures.size() == 2);
     REQUIRE(ev.exposures.back().id == 99);
 }
+
+TEST_CASE("Context refresh rebuilds overridden assignment on same-id variable change", "[context][refresh]") {
+    auto make_data = [](const char* color) {
+        ContextData d;
+        ExperimentData e;
+        e.id = 1;
+        e.name = "example";
+        e.unitType = "user_id";
+        e.split = {0.5, 0.5};
+        e.trafficSplit = {0.0, 1.0};
+        ExperimentVariant v0, v1;
+        v0.config = nullptr;
+        v1.config = nlohmann::json(std::string("{\"color\":\"") + color + "\"}");
+        e.variants = {v0, v1};
+        d.experiments.push_back(e);
+        return d;
+    };
+    ContextConfig cfg;
+    cfg.units = {{"user_id", "u1"}};
+    Context ctx(cfg, make_data("red"));
+    ctx.set_override("example", 1);
+    REQUIRE(ctx.variable_value("color", nlohmann::json("none")) == "red");
+    ctx.refresh(make_data("blue"));
+    REQUIRE(ctx.variable_value("color", nlohmann::json("none")) == "blue");
+}

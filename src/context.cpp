@@ -538,7 +538,18 @@ void Context::refresh(const ContextData& new_data) {
         if (it->second.overridden) {
             auto exp_it = index_.find(it->first);
             bool experiment_gone = exp_it == index_.end();
-            bool changed = !experiment_gone && exp_it->second.data->id != it->second.id;
+            bool changed = false;
+            if (!experiment_gone) {
+                const auto& ed = *exp_it->second.data;
+                const auto& vars = exp_it->second.variables;
+                const auto& cur = it->second;
+                bool vars_changed = cur.variant < 0 ||
+                    static_cast<size_t>(cur.variant) >= vars.size()
+                        ? cur.has_variables
+                        : (!cur.has_variables || vars[cur.variant] != cur.variables);
+                changed = ed.id != cur.id || ed.unitType != cur.unit_type ||
+                          ed.iteration != cur.iteration || vars_changed;
+            }
             // Evict so the next lookup rebuilds the override from the refreshed
             // experiment metadata (new id/variables) and re-queues its exposure.
             if (changed || (experiment_gone && it->second.id != 0)) {
