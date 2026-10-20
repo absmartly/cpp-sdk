@@ -249,14 +249,14 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     // ---- GET /context (fetch -> ready) ----
     const auto& get = requests[0];
     REQUIRE(get.method == "GET");
-    REQUIRE(get.path.rfind("/context", 0) == 0); // path starts with /context
+    REQUIRE(get.path.substr(0, get.path.find('?')) == "/context");
     REQUIRE(get.path.find("application=www") != std::string::npos);
     REQUIRE(get.path.find("environment=test") != std::string::npos);
 
     // ---- PUT /context (publish) ----
     const auto& put = requests[1];
     REQUIRE(put.method == "PUT");
-    REQUIRE(put.path.rfind("/context", 0) == 0);
+    REQUIRE(put.path == "/context");
     // No query params on the PUT path.
     REQUIRE(put.path.find('?') == std::string::npos);
 

@@ -100,8 +100,8 @@ std::future<HTTPClient::Response> DefaultHTTPClient::post(const std::string& url
         std::string full_url = build_url_with_query(url, query);
         curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
         curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, reinterpret_cast<const char*>(body.data()));
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
 
         struct curl_slist* header_list = build_header_list(headers);
         if (header_list) {

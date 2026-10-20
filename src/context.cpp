@@ -469,7 +469,13 @@ PublishEvent Context::finalize() {
     }
 
     finalizing_ = true;
-    auto result = publish();
+    PublishEvent result;
+    try {
+        result = publish();
+    } catch (...) {
+        finalizing_ = false;
+        throw;
+    }
     finalized_ = true;
     finalizing_ = false;
 
@@ -535,7 +541,12 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
                 return existing;
             }
         } else if (!has_custom || cassignments_[experiment_name] == existing.variant) {
-            if (experiment_matches(*experiment->data, existing) &&
+            const auto& ed = *experiment->data;
+            bool unit_now_available = !existing.assigned && ed.fullOnVariant == 0 &&
+                                      !(ed.audienceStrict && existing.audience_mismatch) &&
+                                      !ed.unitType.empty() && units_.count(ed.unitType) > 0;
+            if (!unit_now_available &&
+                experiment_matches(*experiment->data, existing) &&
                 audience_matches(*experiment->data, existing)) {
                 return existing;
             }
