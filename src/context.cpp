@@ -617,6 +617,7 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
         if (experiment != nullptr) {
             assignment.id = experiment->data->id;
             assignment.unit_type = experiment->data->unitType;
+            assignment.iteration = experiment->data->iteration;
         }
         assignment.overridden = true;
         assignment.variant = overrides_[experiment_name];

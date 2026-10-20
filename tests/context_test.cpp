@@ -2247,3 +2247,29 @@ TEST_CASE("Context refresh rebuilds overridden assignment on same-id variable ch
     ctx.refresh(make_data("blue"));
     REQUIRE(ctx.variable_value("color", nlohmann::json("none")) == "blue");
 }
+
+TEST_CASE("Context unchanged refresh keeps nonzero-iteration override without duplicate exposure", "[context][refresh]") {
+    auto make_data = []() {
+        ContextData d;
+        ExperimentData e;
+        e.id = 1;
+        e.name = "example";
+        e.unitType = "user_id";
+        e.iteration = 3;
+        e.split = {0.5, 0.5};
+        e.trafficSplit = {0.0, 1.0};
+        e.variants = {ExperimentVariant{}, ExperimentVariant{}};
+        d.experiments.push_back(e);
+        return d;
+    };
+    ContextConfig cfg;
+    cfg.units = {{"user_id", "u1"}};
+    Context ctx(cfg, make_data());
+    ctx.set_override("example", 1);
+    REQUIRE(ctx.treatment("example") == 1);
+    ctx.refresh(make_data());
+    REQUIRE(ctx.treatment("example") == 1);
+    ctx.refresh(make_data());
+    REQUIRE(ctx.treatment("example") == 1);
+    REQUIRE(ctx.publish().exposures.size() == 1);
+}
