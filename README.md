@@ -396,6 +396,8 @@ nlohmann::json event_json = event;
 send_to_collector(event_json.dump());
 ```
 
+If the context has a `ContextPublisher` and it fails (throws, or returns a failed future), `publish()` emits an `error` event and rethrows. The events stay pending, so a later `publish()` or `finalize()` retries them. A failed `finalize()` leaves the context open.
+
 ### Finalizing
 
 The `finalize()` method will ensure all events have been published, like `publish()`, and will also "seal" the context, throwing a `ContextFinalizedException` if any method that could generate an event is called.
