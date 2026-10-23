@@ -81,15 +81,24 @@ void Context::become_ready(ContextData data) {
     emit_event("ready", ready_data);
 }
 
+void Context::become_failed(const std::string& error) {
+    // Like the JS SDK, a failed load leaves the context ready with empty data
+    // so reads return control/default values.
+    data_ = ContextData{};
+    build_index();
+    failed_ = true;
+    ready_ = true;
+    failed_error_ = error;
+    emit_event("error", {{"message", error}});
+}
+
 void Context::wait_until_ready() {
     if (ready_ || failed_) {
         return;
     }
 
     if (!data_future_.valid()) {
-        failed_ = true;
-        failed_error_ = "No data future available";
-        emit_event("error", {{"message", "No data future available"}});
+        become_failed("No data future available");
         return;
     }
 
@@ -97,9 +106,7 @@ void Context::wait_until_ready() {
         auto data = data_future_.get();
         become_ready(std::move(data));
     } catch (const std::exception& e) {
-        failed_ = true;
-        failed_error_ = e.what();
-        emit_event("error", {{"message", e.what()}});
+        become_failed(e.what());
     }
 }
 
@@ -110,9 +117,7 @@ bool Context::is_ready() {
                 auto data = data_future_.get();
                 become_ready(std::move(data));
             } catch (const std::exception& e) {
-                failed_ = true;
-                failed_error_ = e.what();
-                emit_event("error", {{"message", e.what()}});
+                become_failed(e.what());
             }
         }
     }
@@ -152,6 +157,8 @@ const ContextData& Context::data() const {
 }
 
 std::vector<std::string> Context::experiments() {
+    check_ready();
+
     std::vector<std::string> result;
     result.reserve(data_.experiments.size());
     for (const auto& exp : data_.experiments) {
@@ -250,7 +257,7 @@ void Context::set_custom_assignments(const std::map<std::string, int>& assignmen
 }
 
 int Context::treatment(const std::string& experiment_name) {
-    if (!ready_) return 0;
+    check_ready(true);
 
     auto& assignment = get_or_create_assignment(experiment_name);
 
@@ -263,14 +270,14 @@ int Context::treatment(const std::string& experiment_name) {
 }
 
 int Context::peek(const std::string& experiment_name) {
-    if (!ready_) return 0;
+    check_ready(true);
 
     auto& assignment = get_or_create_assignment(experiment_name);
     return assignment.variant;
 }
 
 nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
-    if (!ready_) return default_value;
+    check_ready(true);
 
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
@@ -298,7 +305,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
 }
 
 nlohmann::json Context::peek_variable_value(const std::string& key, const nlohmann::json& default_value) {
-    if (!ready_) return default_value;
+    check_ready(true);
 
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
@@ -321,6 +328,8 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
 }
 
 std::map<std::string, std::vector<std::string>> Context::variable_keys() {
+    check_ready(true);
+
     std::map<std::string, std::vector<std::string>> result;
 
     for (const auto& [key, experiments_for_var] : index_variables_) {
@@ -333,6 +342,8 @@ std::map<std::string, std::vector<std::string>> Context::variable_keys() {
 }
 
 nlohmann::json Context::custom_field_value(const std::string& experiment_name, const std::string& key) {
+    check_ready(true);
+
     auto it = index_.find(experiment_name);
     if (it == index_.end()) {
         return nullptr;
@@ -376,6 +387,8 @@ nlohmann::json Context::custom_field_value(const std::string& experiment_name, c
 }
 
 std::optional<std::string> Context::custom_field_value_type(const std::string& experiment_name, const std::string& key) {
+    check_ready(true);
+
     auto it = index_.find(experiment_name);
     if (it == index_.end()) {
         return std::nullopt;
@@ -392,6 +405,8 @@ std::optional<std::string> Context::custom_field_value_type(const std::string& e
 }
 
 std::vector<std::string> Context::custom_field_keys() {
+    check_ready(true);
+
     std::set<std::string> keys;
     for (const auto& exp : data_.experiments) {
         for (const auto& field : exp.customFieldValues) {
@@ -425,7 +440,26 @@ void Context::track(const std::string& goal_name, const nlohmann::json& properti
 }
 
 PublishEvent Context::publish() {
+    check_ready(true);
+
+    return flush();
+}
+
+PublishEvent Context::flush() {
     if (pending_ == 0) {
+        return {};
+    }
+
+    if (failed_) {
+        // Same as JS: a context that failed to load has nothing valid to
+        // publish against, so its queued events are dropped and reported.
+        const std::string message = "Discarding " + std::to_string(exposures_.size()) +
+            " exposures and " + std::to_string(goals_.size()) +
+            " goals because context failed to initialize";
+        exposures_.clear();
+        goals_.clear();
+        pending_ = 0;
+        emit_event("error", {{"message", message}});
         return {};
     }
 
@@ -491,16 +525,19 @@ PublishEvent Context::publish() {
 }
 
 PublishEvent Context::finalize() {
-    if (finalized_) {
+    // A finalize() re-entered from a publisher or event logger callback while
+    // the outer one is still flushing must not seal the context ahead of the
+    // outer flush's outcome; the outer call decides.
+    if (finalized_ || finalizing_) {
         return {};
     }
 
     finalizing_ = true;
     PublishEvent result;
     try {
-        result = publish();
+        result = flush();
     } catch (...) {
-        // publish() has requeued the events. Leave the context open so the
+        // flush() has requeued the events. Leave the context open so the
         // caller can retry finalize() instead of being stuck in "finalizing".
         finalizing_ = false;
         throw;
@@ -518,6 +555,13 @@ PublishEvent Context::close() {
 }
 
 void Context::refresh() {
+    check_ready(true);
+
+    // A context whose load failed stays failed: refresh is a successful no-op.
+    if (failed_) {
+        return;
+    }
+
     if (!data_provider_) {
         throw std::runtime_error("Cannot refresh: no data provider configured");
     }
@@ -527,38 +571,19 @@ void Context::refresh() {
 }
 
 void Context::refresh(const ContextData& new_data) {
-    check_not_finalized();
+    check_ready(true);
 
+    if (failed_) {
+        return;
+    }
+
+    // Cached assignments are kept (sticky): get_or_create_assignment() decides
+    // per experiment whether a cached one is still valid against the new data.
+    // An override stays valid while its variant is unchanged, as in JS.
     data_ = new_data;
     build_index();
     hashes_.clear();
     assigners_.clear();
-
-    for (auto it = assignments_.begin(); it != assignments_.end();) {
-        if (it->second.overridden) {
-            auto exp_it = index_.find(it->first);
-            bool experiment_gone = exp_it == index_.end();
-            bool changed = false;
-            if (!experiment_gone) {
-                const auto& ed = *exp_it->second.data;
-                const auto& vars = exp_it->second.variables;
-                const auto& cur = it->second;
-                bool vars_changed = cur.variant < 0 ||
-                    static_cast<size_t>(cur.variant) >= vars.size()
-                        ? cur.has_variables
-                        : (!cur.has_variables || vars[cur.variant] != cur.variables);
-                changed = ed.id != cur.id || ed.unitType != cur.unit_type ||
-                          ed.iteration != cur.iteration || vars_changed;
-            }
-            // Evict so the next lookup rebuilds the override from the refreshed
-            // experiment metadata (new id/variables) and re-queues its exposure.
-            if (changed || (experiment_gone && it->second.id != 0)) {
-                it = assignments_.erase(it);
-                continue;
-            }
-        }
-        ++it;
-    }
 
     nlohmann::json refresh_data;
     nlohmann::json refresh_exps = nlohmann::json::array();
@@ -587,12 +612,7 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
                 return existing;
             }
         } else if (!has_custom || cassignments_[experiment_name] == existing.variant) {
-            const auto& ed = *experiment->data;
-            bool unit_now_available = !existing.assigned && ed.fullOnVariant == 0 &&
-                                      !(ed.audienceStrict && existing.audience_mismatch) &&
-                                      !ed.unitType.empty() && units_.count(ed.unitType) > 0;
-            if (!unit_now_available &&
-                experiment_matches(*experiment->data, existing) &&
+            if (experiment_matches(*experiment->data, existing) &&
                 audience_matches(*experiment->data, existing)) {
                 return existing;
             }
@@ -719,7 +739,7 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
     exposure.custom = assignment.custom;
     exposure.audienceMismatch = assignment.audience_mismatch;
 
-    emit_event("exposure", nlohmann::json{
+    nlohmann::json exposure_data{
         {"id", exposure.id},
         {"name", exposure.name},
         {"unit", exposure.unit.empty() ? nlohmann::json(nullptr) : nlohmann::json(exposure.unit)},
@@ -731,10 +751,13 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
         {"fullOn", exposure.fullOn},
         {"custom", exposure.custom},
         {"audienceMismatch", exposure.audienceMismatch}
-    });
+    };
 
+    // Queue before notifying the event logger, so the exposure is never lost.
     exposures_.push_back(std::move(exposure));
     pending_++;
+
+    emit_event("exposure", exposure_data);
 }
 
 void Context::init(const ContextData& /*data*/) {
@@ -830,7 +853,9 @@ bool Context::audience_matches(const ExperimentData& experiment, Assignment& ass
     if (!audience_str.empty()) {
         if (attrs_seq_ > assignment.attrs_seq) {
             auto result = audience_matcher_.evaluate(audience_str, get_attributes_map());
-            bool new_audience_mismatch = result.has_value() ? !result.value() : false;
+            // An indeterminate result keeps the cached flag, so it alone never
+            // invalidates the assignment.
+            bool new_audience_mismatch = result.has_value() ? !result.value() : assignment.audience_mismatch;
 
             if (new_audience_mismatch != assignment.audience_mismatch) {
                 return false;
@@ -872,19 +897,31 @@ void Context::check_not_finalized() const {
         throw ContextFinalizedException();
     }
     if (finalizing_) {
-        throw ContextFinalizedException();
+        throw ContextFinalizingException();
     }
 }
 
-void Context::check_ready() const {
-    if (!ready_) {
+void Context::check_ready(bool expect_not_finalized) {
+    // A failed load leaves the context usable with empty data, so only a
+    // pending load is "not ready". is_ready() picks up a completed load future.
+    if (!is_ready() && !failed_) {
         throw ContextNotReadyException();
+    }
+
+    if (expect_not_finalized) {
+        check_not_finalized();
     }
 }
 
 void Context::emit_event(const std::string& type, const nlohmann::json& data) {
     if (event_handler_) {
-        event_handler_->handle_event(*this, type, data);
+        // Logging is a side effect: an exception from a user logger must not
+        // fail initialization, turn a delivered publish into a failure, or
+        // abort the operation that emitted the event.
+        try {
+            event_handler_->handle_event(*this, type, data);
+        } catch (...) {
+        }
     }
 }
 

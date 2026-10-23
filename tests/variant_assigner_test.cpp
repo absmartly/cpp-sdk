@@ -98,3 +98,39 @@ TEST_CASE("VariantAssigner with e791e240fcd3df7d238cfc285f475e8152fcc0ec", "[ass
         REQUIRE(assigner.assign({0.33, 0.33, 0.34}, 0x27d1dc86, 0x845461b9) == 1);
     }
 }
+
+// Shared cross-SDK UTF-8 vectors (validated against the JS SDK's
+// stringToUint8Array/hashUnit and VariantAssigner). A unit is hashed over its
+// UTF-8 bytes; non-BMP characters are the standard 4-byte sequence, and a lone
+// surrogate (not representable in valid UTF-8) is U+FFFD (EF BF BD).
+TEST_CASE("hash_unit and assignment with UTF-8 vectors", "[assigner][utf8]") {
+    struct Vector {
+        std::string value;
+        std::vector<uint8_t> utf8;
+        std::string hash;
+    };
+
+    const std::vector<Vector> vectors = {
+        {"user\xF0\x9F\x98\x80id", {117, 115, 101, 114, 240, 159, 152, 128, 105, 100}, "nnPMxN6wY36LGRnuJ6jZrw"},
+        {"\xF0\x9F\x98\x80", {240, 159, 152, 128}, "KgLqw51xanDs83V5GFkntg"},
+        {"\xF0\xA0\x80\x8B", {240, 160, 128, 139}, "8mWvgvNGn-DZqb6Ft0HVjA"},
+        {"a\xE2\x82\xAC\xF0\x9D\x84\x9Ez", {97, 226, 130, 172, 240, 157, 132, 158, 122}, "AGGq8R9K1XjO77q33izhLg"},
+        {"\xF0\x9F\x87\xB5\xF0\x9F\x87\xB9", {240, 159, 135, 181, 240, 159, 135, 185}, "1RRpVphazpblARsm5DaSkg"},
+        {"ab\xEF\xBF\xBD" "cd", {97, 98, 239, 191, 189, 99, 100}, "jvDxBUzS9Tdsml3QQStWSg"},
+    };
+
+    for (const auto& v : vectors) {
+        CAPTURE(v.hash);
+        REQUIRE(std::vector<uint8_t>(v.value.begin(), v.value.end()) == v.utf8);
+        REQUIRE(hash_unit(v.value) == v.hash);
+    }
+
+    const int32_t seed_hi = 3603583;
+    const int32_t seed_lo = 233373918;
+    const std::vector<double> split = {0.5, 0.5};
+
+    REQUIRE(VariantAssigner(hash_unit("\xF0\x9F\x98\x80")).assign(split, seed_hi, seed_lo) == 1);
+    REQUIRE(VariantAssigner(hash_unit("\xF0\x9F\x87\xB5\xF0\x9F\x87\xB9")).assign(split, seed_hi, seed_lo) == 0);
+    REQUIRE(VariantAssigner(hash_unit("a\xE2\x82\xAC\xF0\x9D\x84\x9Ez")).assign(split, seed_hi, seed_lo) == 1);
+    REQUIRE(VariantAssigner(hash_unit("user\xF0\x9F\x98\x80id")).assign(split, seed_hi, seed_lo) == 0);
+}

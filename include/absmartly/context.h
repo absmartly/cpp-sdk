@@ -119,12 +119,15 @@ private:
     nlohmann::json get_attributes_map() const;
     std::string unit_hash(const std::string& unit_type);
 
+    PublishEvent flush();
+
     void check_not_finalized() const;
-    void check_ready() const;
+    void check_ready(bool expect_not_finalized = false);
 
     void emit_event(const std::string& type, const nlohmann::json& data = nlohmann::json());
     void setup_from_config();
     void become_ready(ContextData data);
+    void become_failed(const std::string& error);
 
     ContextConfig config_;
     ContextData data_;

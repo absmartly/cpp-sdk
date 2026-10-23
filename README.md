@@ -260,6 +260,8 @@ absmartly::ContextData fresh_data = nlohmann::json::parse(fresh_json_response)
 context.refresh(fresh_data);
 ```
 
+Assignments are sticky across a refresh. A cached assignment is kept while the experiment's id, unit type, iteration, full-on variant and traffic split are unchanged; its audience is re-evaluated only after attributes change. An override is kept while its variant is unchanged. Calling `refresh()` on a context whose data failed to load does nothing (the context stays failed).
+
 ### Setting Extra Units
 
 You can add additional units to a context by calling the `set_unit()` or `set_units()` methods. This is useful when a user logs in and you want to associate the new identity with the context. Note that you cannot override an already set unit type, as that would be a change of identity and will throw an exception. In this case, you must create a new context instead.
@@ -400,7 +402,7 @@ If the context has a `ContextPublisher` and it fails (throws, or returns a faile
 
 ### Finalizing
 
-The `finalize()` method will ensure all events have been published, like `publish()`, and will also "seal" the context, throwing a `ContextFinalizedException` if any method that could generate an event is called.
+The `finalize()` method will ensure all events have been published, like `publish()`, and will also "seal" the context. After that, `treatment()`, `peek()`, `variable_value()`, `variable_keys()`, the custom field getters, `publish()`, `refresh()`, `track()` and the setters throw a `ContextFinalizedException`.
 
 ```cpp
 absmartly::PublishEvent event = context.finalize();
@@ -472,8 +474,15 @@ The SDK defines the following exception types:
 
 | Exception                    | When                                                      |
 | ---------------------------- | --------------------------------------------------------- |
-| `ContextFinalizedException`  | A method is called on a finalized or finalizing context   |
-| `ContextNotReadyException`   | A method is called on a context that is not ready         |
+| `ContextFinalizedException`  | A method is called on a finalized context ("ABsmartly Context is finalized.") |
+| `ContextFinalizingException` | A method is called while `finalize()` is publishing ("ABsmartly Context is finalizing."); derives from `ContextFinalizedException` |
+| `ContextNotReadyException`   | A read (`treatment()`, `peek()`, `variable_value()`, `peek_variable_value()`, `variable_keys()`, `experiments()`, custom field getters) or `publish()`/`refresh()` is called while the context data is still loading ("ABsmartly Context is not yet ready.") |
+
+**Breaking change:** reads before the context is ready, and after `finalize()`, now throw (as the JavaScript SDK does) instead of returning `0` or the default value. Call `wait_until_ready()` (or check `is_ready()`) first. A context whose data failed to load is not "not ready": its reads return the defaults.
+
+A `Context` is not thread-safe. Use each instance from one thread at a time, or guard it with your own lock.
+
+An exception thrown by a `ContextEventLogger` is ignored by the SDK; it does not fail the operation that emitted the event.
 
 ## About A/B Smartly
 

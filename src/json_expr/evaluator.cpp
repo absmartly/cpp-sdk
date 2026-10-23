@@ -65,7 +65,8 @@ std::optional<bool> Evaluator::to_boolean(const nlohmann::json& value) {
         return value.get<double>() != 0.0;
     }
     if (value.is_string()) {
-        return !value.get_ref<const std::string&>().empty();
+        const auto& str = value.get_ref<const std::string&>();
+        return !str.empty() && str != "false" && str != "0";
     }
     if (value.is_array() || value.is_object()) {
         return true;
@@ -109,18 +110,28 @@ std::optional<std::string> Evaluator::to_string_value(const nlohmann::json& valu
         return value.get<bool>() ? std::string("true") : std::string("false");
     }
     if (value.is_number()) {
+        // JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
         double d = value.get<double>();
-        double int_part;
-        if (std::modf(d, &int_part) == 0.0 && std::abs(d) < 1e15) {
+        if (!std::isfinite(d) || std::abs(d) >= 1e21) {
             std::ostringstream oss;
             oss.imbue(std::locale::classic());
-            oss << std::fixed << std::setprecision(0) << d;
+            oss << std::setprecision(17) << d;
             return oss.str();
         }
         std::ostringstream oss;
         oss.imbue(std::locale::classic());
-        oss << std::setprecision(15) << d;
+        oss << std::fixed << std::setprecision(15) << d;
         std::string result = oss.str();
+        size_t end = result.size();
+        size_t zeros = 0;
+        while (zeros < 15 && end > 0 && result[end - 1] == '0') {
+            --end;
+            ++zeros;
+        }
+        if (end > 0 && result[end - 1] == '.') {
+            --end;
+        }
+        result.resize(end);
         return result;
     }
     return std::nullopt;

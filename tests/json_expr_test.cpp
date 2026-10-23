@@ -27,7 +27,10 @@ TEST_CASE("Evaluator::to_boolean", "[evaluator][boolean]") {
     SECTION("strings: empty is false, non-empty is true") {
         REQUIRE(Evaluator::to_boolean("").value() == false);
         REQUIRE(Evaluator::to_boolean("abc").value() == true);
-        REQUIRE(Evaluator::to_boolean("0").value() == true);
+        // JS/Java booleanConvert: "false" and "0" are falsy strings.
+        REQUIRE(Evaluator::to_boolean("0").value() == false);
+        REQUIRE(Evaluator::to_boolean("false").value() == false);
+        REQUIRE(Evaluator::to_boolean("true").value() == true);
         REQUIRE(Evaluator::to_boolean("1").value() == true);
     }
 
@@ -105,6 +108,13 @@ TEST_CASE("Evaluator::to_string_value", "[evaluator][string]") {
         REQUIRE(Evaluator::to_string_value(0.0).value() == "0");
         REQUIRE(Evaluator::to_string_value(2147483647.0).value() == "2147483647");
         REQUIRE(Evaluator::to_string_value(-2147483647.0).value() == "-2147483647");
+        // Matches JS toFixed(15) with trailing zeros stripped.
+        REQUIRE(Evaluator::to_string_value(1e15).value() == "1000000000000000");
+        REQUIRE(Evaluator::to_string_value(123456789012345678.0).value() == "123456789012345680");
+        REQUIRE(Evaluator::to_string_value(0.1 + 0.2).value() == "0.3");
+        REQUIRE(Evaluator::to_string_value(1e-16).value() == "0");
+        REQUIRE(Evaluator::to_string_value(0.000001).value() == "0.000001");
+        REQUIRE(Evaluator::to_string_value(2.0 / 3.0).value() == "0.666666666666667");
     }
 
     SECTION("arrays and objects return nullopt") {

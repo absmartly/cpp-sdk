@@ -60,6 +60,13 @@ TEST_CASE("VarOperator", "[operators][var]") {
         json expr = {{"var", "x"}};
         REQUIRE(evaluator.evaluate(expr, vars).is_null());
     }
+
+    SECTION("returns null for a non-string path instead of throwing") {
+        json vars = {{"a", 1}};
+        REQUIRE(evaluator.evaluate(json{{"var", json{{"path", 1}}}}, vars).is_null());
+        REQUIRE(evaluator.evaluate(json{{"var", json{{"path", nullptr}}}}, vars).is_null());
+        REQUIRE(evaluator.evaluate(json{{"var", 1}}, vars).is_null());
+    }
 }
 
 TEST_CASE("AndOperator", "[operators][and]") {
@@ -162,6 +169,12 @@ TEST_CASE("NotOperator", "[operators][not]") {
     SECTION("negates null to true") {
         json expr = {{"not", json{{"value", nullptr}}}};
         REQUIRE(evaluator.evaluate(expr, vars) == true);
+    }
+
+    SECTION("treats \"false\" and \"0\" strings as falsy") {
+        REQUIRE(evaluator.evaluate(json{{"not", json{{"value", "false"}}}}, vars) == true);
+        REQUIRE(evaluator.evaluate(json{{"not", json{{"value", "0"}}}}, vars) == true);
+        REQUIRE(evaluator.evaluate(json{{"not", json{{"value", "no"}}}}, vars) == false);
     }
 }
 

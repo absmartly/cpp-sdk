@@ -430,10 +430,10 @@ TEST_CASE("Context treatment", "[context]") {
         REQUIRE(handler->count_events("exposure") == 0);
     }
 
-    SECTION("should not throw after finalize") {
+    SECTION("should throw after finalize") {
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_NOTHROW(ctx.treatment("exp_test_ab"));
+        REQUIRE_THROWS_AS(ctx.treatment("exp_test_ab"), ContextFinalizedException);
     }
 }
 
@@ -715,10 +715,10 @@ TEST_CASE("Context variables", "[context]") {
         REQUIRE(ctx.variable_value("banner.size", 17) == 17);
     }
 
-    SECTION("should not throw after finalize") {
+    SECTION("should throw after finalize") {
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_NOTHROW(ctx.variable_value("banner.size", 0));
+        REQUIRE_THROWS_AS(ctx.variable_value("banner.size", 0), ContextFinalizedException);
     }
 }
 
@@ -1093,14 +1093,17 @@ TEST_CASE("Context finalize", "[context]") {
         Context ctx(config, data);
         ctx.finalize();
 
-        REQUIRE_NOTHROW(ctx.treatment("exp_test_ab"));
-        REQUIRE_NOTHROW(ctx.peek("exp_test_ab"));
+        REQUIRE_THROWS_AS(ctx.treatment("exp_test_ab"), ContextFinalizedException);
+        REQUIRE_THROWS_AS(ctx.peek("exp_test_ab"), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.track("goal1"), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_attribute("a", 1), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_unit("test", "test"), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_custom_assignment("exp", 1), ContextFinalizedException);
-        REQUIRE_NOTHROW(ctx.variable_value("key", 0));
-        REQUIRE_NOTHROW(ctx.peek_variable_value("key", 0));
+        REQUIRE_THROWS_AS(ctx.variable_value("key", 0), ContextFinalizedException);
+        REQUIRE_THROWS_AS(ctx.peek_variable_value("key", 0), ContextFinalizedException);
+        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextFinalizedException);
+        REQUIRE_THROWS_AS(ctx.publish(), ContextFinalizedException);
+        REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextFinalizedException);
     }
 }
 
@@ -1275,7 +1278,7 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
         REQUIRE(handler->count_events("refresh") == 1);
     }
 
-    SECTION("should re-queue overridden experiment exposure after refresh") {
+    SECTION("should keep overridden assignment after refresh changes the experiment id") {
         auto data = make_test_data();
         auto changed_data = data;
         for (auto& exp : changed_data.experiments) {
@@ -1293,7 +1296,9 @@ TEST_CASE("Context refresh/cache invalidation", "[context]") {
         ctx.refresh();
 
         REQUIRE(ctx.treatment("exp_test_ab") == 3);
-        REQUIRE(ctx.pending() == 2);
+        // Sticky like JS (context.ts:670-686): the override's variant is
+        // unchanged, so no second exposure is queued.
+        REQUIRE(ctx.pending() == 1);
     }
 }
 
@@ -1618,7 +1623,7 @@ TEST_CASE("Context disjointed audiences", "[context]") {
     }
 }
 
-TEST_CASE("Fix: custom_field_value and custom_field_keys return safe defaults when not ready", "[context][fix8]") {
+TEST_CASE("custom field reads throw before ready", "[context][notready]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
 
@@ -1627,8 +1632,9 @@ TEST_CASE("Fix: custom_field_value and custom_field_keys return safe defaults wh
 
     Context ctx(config, std::move(future));
 
-    REQUIRE(ctx.custom_field_value("exp_test_abc", "country") == nullptr);
-    REQUIRE(ctx.custom_field_keys().empty());
+    REQUIRE_THROWS_AS(ctx.custom_field_value("exp_test_abc", "country"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.custom_field_value_type("exp_test_abc", "country"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextNotReadyException);
 }
 
 TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
@@ -1644,7 +1650,7 @@ TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
     REQUIRE_NOTHROW(ctx.set_overrides({{"exp_test_ab", 2}}));
 }
 
-TEST_CASE("Fix: experiments() does not throw after finalize", "[context][fix22]") {
+TEST_CASE("experiments() does not throw after finalize", "[context][fix22]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
@@ -1655,26 +1661,26 @@ TEST_CASE("Fix: experiments() does not throw after finalize", "[context][fix22]"
     REQUIRE_NOTHROW(ctx.experiments());
 }
 
-TEST_CASE("Fix: variable_keys() returns empty before ready and after finalize", "[context][fix24]") {
+TEST_CASE("variable_keys() throws before ready and after finalize", "[context][fix24]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
 
-    SECTION("returns empty before ready") {
+    SECTION("throws before ready") {
         std::promise<ContextData> promise;
         auto future = promise.get_future();
         Context ctx(config, std::move(future));
-        REQUIRE(ctx.variable_keys().empty());
+        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextNotReadyException);
     }
 
-    SECTION("does not throw after finalize") {
+    SECTION("throws after finalize") {
         ContextData data = make_test_data();
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_NOTHROW(ctx.variable_keys());
+        REQUIRE_THROWS_AS(ctx.variable_keys(), ContextFinalizedException);
     }
 }
 
-TEST_CASE("Fix: custom_field_value/keys do not throw after finalize", "[context][fix8]") {
+TEST_CASE("custom_field_value/keys throw after finalize", "[context][fix8]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
@@ -1682,8 +1688,8 @@ TEST_CASE("Fix: custom_field_value/keys do not throw after finalize", "[context]
     Context ctx(config, data);
     ctx.finalize();
 
-    REQUIRE_NOTHROW(ctx.custom_field_value("exp_test_abc", "country"));
-    REQUIRE_NOTHROW(ctx.custom_field_keys());
+    REQUIRE_THROWS_AS(ctx.custom_field_value("exp_test_abc", "country"), ContextFinalizedException);
+    REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextFinalizedException);
 }
 
 TEST_CASE("Fix: redundant data copy removed in init", "[context][fix9]") {
@@ -1891,7 +1897,22 @@ TEST_CASE("ready_error returns message on failure", "[context][readyerror]") {
     ctx.wait_until_ready();
 
     REQUIRE(ctx.is_failed());
+    REQUIRE(ctx.is_ready());
     REQUIRE(ctx.ready_error() == "load failed");
+}
+
+TEST_CASE("A failed load is ready with empty data", "[context][failed]") {
+    auto config = make_test_config();
+    std::promise<ContextData> promise;
+    promise.set_exception(std::make_exception_ptr(std::runtime_error("load failed")));
+    Context ctx(config, promise.get_future());
+
+    // is_ready() itself picks up the failed future, like JS isReady() after the
+    // load promise rejects.
+    REQUIRE(ctx.is_ready());
+    REQUIRE(ctx.is_failed());
+    REQUIRE(ctx.data().experiments.empty());
+    REQUIRE(ctx.treatment("exp_test_ab") == 0);
 }
 
 TEST_CASE("custom_field_value_type returns type string", "[context][customfieldtype]") {
@@ -2193,7 +2214,7 @@ TEST_CASE("Finalize failure keeps the context open with pending events", "[conte
     REQUIRE(handler->count_events("finalize") == 1);
 }
 
-TEST_CASE("Context refresh rebuilds overridden assignment with new experiment id", "[context][refresh]") {
+TEST_CASE("Context refresh keeps overridden assignment when the experiment id changes", "[context][refresh]") {
     auto make_data = [](int id) {
         ContextData d;
         ExperimentData e;
@@ -2218,12 +2239,14 @@ TEST_CASE("Context refresh rebuilds overridden assignment with new experiment id
     REQUIRE(ctx.treatment("example") == 1);
     ctx.refresh(make_data(99));
     REQUIRE(ctx.treatment("example") == 1);
+    // Sticky like JS (context.ts:670-686) and Java (Context.java:1147): an
+    // override stays cached while its variant is unchanged.
     auto ev = ctx.publish();
-    REQUIRE(ev.exposures.size() == 2);
-    REQUIRE(ev.exposures.back().id == 99);
+    REQUIRE(ev.exposures.size() == 1);
+    REQUIRE(ev.exposures.back().id == 1);
 }
 
-TEST_CASE("Context refresh rebuilds overridden assignment on same-id variable change", "[context][refresh]") {
+TEST_CASE("Context refresh keeps overridden assignment on same-id variable change", "[context][refresh]") {
     auto make_data = [](const char* color) {
         ContextData d;
         ExperimentData e;
@@ -2245,7 +2268,7 @@ TEST_CASE("Context refresh rebuilds overridden assignment on same-id variable ch
     ctx.set_override("example", 1);
     REQUIRE(ctx.variable_value("color", nlohmann::json("none")) == "red");
     ctx.refresh(make_data("blue"));
-    REQUIRE(ctx.variable_value("color", nlohmann::json("none")) == "blue");
+    REQUIRE(ctx.variable_value("color", nlohmann::json("none")) == "red");
 }
 
 TEST_CASE("Context unchanged refresh keeps nonzero-iteration override without duplicate exposure", "[context][refresh]") {
@@ -2272,4 +2295,309 @@ TEST_CASE("Context unchanged refresh keeps nonzero-iteration override without du
     ctx.refresh(make_data());
     REQUIRE(ctx.treatment("example") == 1);
     REQUIRE(ctx.publish().exposures.size() == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Parity with the JS SDK (javascript-sdk main, src/context.ts).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class ThrowingEventHandler : public ContextEventLogger {
+public:
+    void handle_event(Context& context, const std::string& event_type, const nlohmann::json& data) override {
+        (void)context;
+        (void)data;
+        events.push_back(event_type);
+        throw std::runtime_error("logger failed");
+    }
+
+    std::vector<std::string> events;
+};
+
+class CountingDataProvider : public ContextDataProvider {
+public:
+    explicit CountingDataProvider(ContextData data) : data_(std::move(data)) {}
+
+    std::future<ContextData> get_context_data() override {
+        ++calls;
+        std::promise<ContextData> promise;
+        promise.set_value(data_);
+        return promise.get_future();
+    }
+
+    int calls = 0;
+
+private:
+    ContextData data_;
+};
+
+} // namespace
+
+TEST_CASE("Reads throw before the context is ready", "[context][notready]") {
+    auto config = make_test_config();
+    std::promise<ContextData> promise;
+    Context ctx(config, promise.get_future());
+
+    REQUIRE_FALSE(ctx.is_ready());
+    REQUIRE_THROWS_AS(ctx.treatment("exp_test_ab"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.peek("exp_test_ab"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.variable_value("banner.size", "small"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.peek_variable_value("banner.size", "small"), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.variable_keys(), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.experiments(), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.publish(), ContextNotReadyException);
+    REQUIRE_THROWS_AS(ctx.refresh(), ContextNotReadyException);
+    REQUIRE_THROWS_WITH(ctx.treatment("exp_test_ab"), "ABsmartly Context is not yet ready.");
+
+    // Writes are allowed before ready, as in JS.
+    REQUIRE_NOTHROW(ctx.track("goal1"));
+    REQUIRE_NOTHROW(ctx.set_attribute("a", 1));
+
+    // A completed load is picked up by the read itself.
+    promise.set_value(make_test_data());
+    REQUIRE(ctx.treatment("exp_test_ab") == 1);
+}
+
+TEST_CASE("Reads on a failed context return defaults", "[context][failed]") {
+    auto config = make_test_config();
+    std::promise<ContextData> promise;
+    promise.set_exception(std::make_exception_ptr(std::runtime_error("load failed")));
+    Context ctx(config, promise.get_future());
+    ctx.wait_until_ready();
+
+    REQUIRE(ctx.is_failed());
+    REQUIRE(ctx.treatment("exp_test_ab") == 0);
+    REQUIRE(ctx.variable_value("banner.size", "small") == "small");
+    REQUIRE(ctx.experiments().empty());
+}
+
+TEST_CASE("Refresh on a failed context is a no-op", "[context][failed]") {
+    auto config = make_test_config();
+    auto provider = std::make_shared<CountingDataProvider>(make_test_data());
+    std::promise<ContextData> promise;
+    promise.set_exception(std::make_exception_ptr(std::runtime_error("load failed")));
+    Context ctx(config, promise.get_future(), nullptr, nullptr, provider);
+    ctx.wait_until_ready();
+
+    REQUIRE_NOTHROW(ctx.refresh());
+    REQUIRE_NOTHROW(ctx.refresh(make_test_data()));
+    REQUIRE(provider->calls == 0);
+    REQUIRE(ctx.is_failed());
+    REQUIRE(ctx.experiments().empty());
+    REQUIRE(ctx.treatment("exp_test_ab") == 0);
+}
+
+TEST_CASE("Publishing on a failed context discards the queued events", "[context][failed]") {
+    auto config = make_test_config();
+    auto handler = std::make_shared<MockEventHandler>();
+    auto publisher = std::make_shared<ScriptedPublisher>();
+    std::promise<ContextData> promise;
+    promise.set_exception(std::make_exception_ptr(std::runtime_error("load failed")));
+    Context ctx(config, promise.get_future(), handler, publisher);
+    ctx.wait_until_ready();
+
+    ctx.track("goal1");
+    REQUIRE(ctx.pending() == 1);
+    handler->clear();
+
+    REQUIRE_NOTHROW(ctx.finalize());
+    REQUIRE(ctx.is_finalized());
+    REQUIRE(ctx.pending() == 0);
+    REQUIRE(publisher->received.empty());
+    REQUIRE(handler->count_events("error") == 1);
+}
+
+TEST_CASE("A late unit does not change a cached unassigned treatment", "[context][sticky]") {
+    // JS keeps the cached assignment (experimentMatches ignores units;
+    // unit() only evicts holdout/rule assignments pinned with a missing unit).
+    ContextConfig config;
+    Context ctx(config, make_test_data());
+
+    REQUIRE(ctx.peek("exp_test_ab") == 0);
+    ctx.set_unit("session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec");
+    REQUIRE(ctx.treatment("exp_test_ab") == 0);
+    REQUIRE(ctx.publish().exposures.at(0).assigned == false);
+
+    // An experiment first evaluated after the unit is set is assigned.
+    REQUIRE(ctx.treatment("exp_test_abc") == 2);
+}
+
+TEST_CASE("Override retains cache across iteration and seed changes (scenario 33)", "[context][sticky][scenario33]") {
+    auto config = make_test_config();
+    auto data = make_test_data();
+    auto handler = std::make_shared<MockEventHandler>();
+    Context ctx(config, data, handler);
+    ctx.set_override("exp_test_ab", 1);
+    REQUIRE(ctx.treatment("exp_test_ab") == 1);
+    REQUIRE(handler->count_events("exposure") == 1);
+
+    for (auto& exp : data.experiments) {
+        if (exp.name == "exp_test_ab") {
+            ++exp.iteration;
+            exp.seedHi = 99999;
+            exp.seedLo = 99999;
+            exp.split = {0.3, 0.7};
+        }
+    }
+    ctx.refresh(data);
+    REQUIRE(ctx.treatment("exp_test_ab") == 1);
+    REQUIRE(handler->count_events("exposure") == 1);
+    REQUIRE(ctx.pending() == 1);
+    const auto event = ctx.publish();
+    REQUIRE(event.exposures.size() == 1);
+    REQUIRE(event.exposures[0].overridden);
+    REQUIRE_FALSE(event.exposures[0].assigned);
+}
+
+TEST_CASE("Ordinary assignments retain variant configs across non-key refresh changes", "[context][sticky]") {
+    auto config = make_test_config();
+    auto data = make_test_data();
+    Context ctx(config, data);
+    const auto variant = ctx.treatment("exp_test_ab");
+    const auto value = ctx.variable_value("banner.size", "missing");
+    REQUIRE(ctx.pending() == 1);
+
+    for (auto& exp : data.experiments) {
+        if (exp.name == "exp_test_ab") {
+            exp.seedHi = 99999;
+            exp.seedLo = 99999;
+            exp.trafficSeedHi = 99999;
+            exp.trafficSeedLo = 99999;
+            exp.split = {1.0, 0.0};
+            exp.audience = "not json";
+            for (auto& v : exp.variants) {
+                v.config = nlohmann::json{{"banner.size", "changed"}};
+            }
+        }
+    }
+    ctx.refresh(data);
+    REQUIRE(ctx.treatment("exp_test_ab") == variant);
+    REQUIRE(ctx.variable_value("banner.size", "missing") == value);
+    REQUIRE(ctx.pending() == 1);
+}
+
+TEST_CASE("An indeterminate audience result keeps the cached assignment", "[context][sticky]") {
+    ContextData data;
+    ExperimentData exp;
+    exp.id = 1;
+    exp.name = "exp";
+    exp.unitType = "session_id";
+    exp.split = {0.0, 1.0};
+    exp.trafficSplit = {0.0, 1.0};
+    exp.audienceStrict = true;
+    exp.audience = nlohmann::json(R"({"filter":[{"gte":[{"var":"age"},{"value":20}]}]})");
+    exp.variants = {ExperimentVariant{}, ExperimentVariant{}};
+    data.experiments.push_back(exp);
+
+    auto config = make_test_config();
+    Context ctx(config, data);
+    ctx.set_attribute("age", 10);
+    REQUIRE(ctx.treatment("exp") == 0);
+    REQUIRE(ctx.pending() == 1);
+
+    // Audience text is not part of the cache key, so the refresh keeps the
+    // assignment; the unparsable audience then evaluates to "unknown" after
+    // the attribute change, which must not flip the cached mismatch.
+    data.experiments[0].audience = nlohmann::json("not json");
+    ctx.refresh(data);
+    ctx.set_attribute("age", 30);
+    REQUIRE(ctx.treatment("exp") == 0);
+    REQUIRE(ctx.pending() == 1);
+}
+
+TEST_CASE("A throwing event logger does not fail the context", "[context][logger]") {
+    auto config = make_test_config();
+    auto handler = std::make_shared<ThrowingEventHandler>();
+    auto publisher = std::make_shared<ScriptedPublisher>();
+
+    std::promise<ContextData> promise;
+    promise.set_value(make_test_data());
+    Context ctx(config, promise.get_future(), handler, publisher);
+    ctx.wait_until_ready();
+
+    REQUIRE(ctx.is_ready());
+    REQUIRE_FALSE(ctx.is_failed());
+
+    REQUIRE(ctx.treatment("exp_test_ab") == 1);
+    REQUIRE(ctx.pending() == 1);
+
+    REQUIRE_NOTHROW(ctx.publish());
+    REQUIRE(ctx.pending() == 0);
+    REQUIRE(publisher->received.size() == 1);
+    REQUIRE(publisher->received[0].exposures.size() == 1);
+
+    ctx.track("goal1");
+    REQUIRE_NOTHROW(ctx.finalize());
+    REQUIRE(ctx.is_finalized());
+    REQUIRE(publisher->received.size() == 2);
+}
+
+namespace {
+
+// Calls finalize() on the context from inside publish, then fails.
+class ReentrantFinalizePublisher : public ContextPublisher {
+public:
+    std::future<void> publish(const PublishEvent& event) override {
+        (void)event;
+        ++calls;
+        if (calls == 1) {
+            context->finalize();
+            throw std::runtime_error("Publish failed");
+        }
+        std::promise<void> p;
+        p.set_value();
+        return p.get_future();
+    }
+
+    Context* context = nullptr;
+    int calls = 0;
+};
+
+} // namespace
+
+TEST_CASE("A re-entrant finalize during a failing finalize does not seal the context", "[context][publishfail]") {
+    auto config = make_test_config();
+    auto publisher = std::make_shared<ReentrantFinalizePublisher>();
+    Context ctx(config, make_test_data(), nullptr, publisher);
+    publisher->context = &ctx;
+
+    ctx.treatment("exp_test_ab");
+    REQUIRE_THROWS_WITH(ctx.finalize(), "Publish failed");
+
+    REQUIRE_FALSE(ctx.is_finalized());
+    REQUIRE_FALSE(ctx.is_finalizing());
+    REQUIRE(ctx.pending() == 1);
+
+    REQUIRE_NOTHROW(ctx.finalize());
+    REQUIRE(ctx.is_finalized());
+    REQUIRE(ctx.pending() == 0);
+}
+
+TEST_CASE("Reads during finalize report finalizing", "[context][errors]") {
+    auto config = make_test_config();
+
+    class ReadingPublisher : public ContextPublisher {
+    public:
+        std::future<void> publish(const PublishEvent&) override {
+            try {
+                context->treatment("exp_test_ab");
+            } catch (const std::exception& e) {
+                message = e.what();
+            }
+            std::promise<void> p;
+            p.set_value();
+            return p.get_future();
+        }
+        Context* context = nullptr;
+        std::string message;
+    };
+
+    auto publisher = std::make_shared<ReadingPublisher>();
+    Context ctx(config, make_test_data(), nullptr, publisher);
+    publisher->context = &ctx;
+    ctx.track("goal1");
+    ctx.finalize();
+
+    REQUIRE(publisher->message == "ABsmartly Context is finalizing.");
 }

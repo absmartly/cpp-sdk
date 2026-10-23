@@ -19,8 +19,12 @@ nlohmann::json VarOperator::evaluate(
     const nlohmann::json& vars
 ) const {
     std::string path;
-    if (args.is_object() && args.contains("path")) {
-        path = args["path"].get<std::string>();
+    if (args.is_object()) {
+        auto it = args.find("path");
+        if (it == args.end() || !it->is_string()) {
+            return nullptr;
+        }
+        path = it->get<std::string>();
     } else if (args.is_string()) {
         path = args.get<std::string>();
     } else {
