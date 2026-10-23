@@ -113,10 +113,18 @@ std::optional<std::string> Evaluator::to_string_value(const nlohmann::json& valu
         // JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
         double d = value.get<double>();
         if (!std::isfinite(d) || std::abs(d) >= 1e21) {
-            std::ostringstream oss;
-            oss.imbue(std::locale::classic());
-            oss << std::setprecision(17) << d;
-            return oss.str();
+            // JS falls back to the shortest round-trip form, e.g. "1e+23".
+            std::string out;
+            for (int precision = 1; precision <= 17; ++precision) {
+                std::ostringstream oss;
+                oss.imbue(std::locale::classic());
+                oss << std::setprecision(precision) << d;
+                out = oss.str();
+                if (!std::isfinite(d) || std::stod(out) == d) {
+                    break;
+                }
+            }
+            return out;
         }
         std::ostringstream oss;
         oss.imbue(std::locale::classic());

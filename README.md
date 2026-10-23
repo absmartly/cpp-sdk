@@ -8,7 +8,7 @@ The A/B Smartly C++ SDK is compatible with C++17 and later. It requires a compil
 
 ## Installation
 
-#### CMake (FetchContent)
+### CMake (FetchContent)
 
 Add the following to your `CMakeLists.txt` to include the SDK directly from the repository:
 
@@ -25,7 +25,7 @@ FetchContent_MakeAvailable(absmartly-sdk)
 target_link_libraries(your_target PRIVATE absmartly-sdk)
 ```
 
-#### CMake (Local)
+### CMake (Local)
 
 If you have cloned the repository locally, you can add it as a subdirectory:
 
@@ -34,7 +34,7 @@ add_subdirectory(path/to/cpp-sdk)
 target_link_libraries(your_target PRIVATE absmartly-sdk)
 ```
 
-#### Building from Source
+### Building from Source
 
 ```bash
 mkdir build && cd build
@@ -264,7 +264,7 @@ Assignments are sticky across a refresh. A cached assignment is kept while the e
 
 ### Setting Extra Units
 
-You can add additional units to a context by calling the `set_unit()` or `set_units()` methods. This is useful when a user logs in and you want to associate the new identity with the context. Note that you cannot override an already set unit type, as that would be a change of identity and will throw an exception. In this case, you must create a new context instead.
+You can add additional units to a context by calling the `set_unit()` or `set_units()` methods. This is useful when a user logs in, and you want to associate the new identity with the context. Note that you cannot override an already set unit type, as that would be a change of identity and will throw an exception. In this case, you must create a new context instead.
 
 ```cpp
 context.set_unit("db_user_id", "1000013");
@@ -490,18 +490,18 @@ An exception thrown by a `ContextEventLogger` is ignored by the SDK; it does not
 A/B Smartly's real-time analytics helps engineering and product teams ensure that new features will improve the customer experience without breaking or degrading performance and/or business metrics.
 
 ### Have a look at our growing list of clients and SDKs:
-- [Java SDK](https://www.github.com/absmartly/java-sdk)
-- [JavaScript SDK](https://www.github.com/absmartly/javascript-sdk)
-- [PHP SDK](https://www.github.com/absmartly/php-sdk)
-- [Swift SDK](https://www.github.com/absmartly/swift-sdk)
-- [Vue2 SDK](https://www.github.com/absmartly/vue2-sdk)
-- [Vue3 SDK](https://www.github.com/absmartly/vue3-sdk)
-- [React SDK](https://www.github.com/absmartly/react-sdk)
-- [Angular SDK](https://www.github.com/absmartly/angular-sdk)
-- [Python3 SDK](https://www.github.com/absmartly/python3-sdk)
-- [Go SDK](https://www.github.com/absmartly/go-sdk)
-- [Ruby SDK](https://www.github.com/absmartly/ruby-sdk)
-- [.NET SDK](https://www.github.com/absmartly/dotnet-sdk)
-- [C++ SDK](https://www.github.com/absmartly/cpp-sdk) (this package)
-- [Dart SDK](https://www.github.com/absmartly/dart-sdk)
-- [Flutter SDK](https://www.github.com/absmartly/flutter-sdk)
+- [Java SDK](https://github.com/absmartly/java-sdk)
+- [JavaScript SDK](https://github.com/absmartly/javascript-sdk)
+- [PHP SDK](https://github.com/absmartly/php-sdk)
+- [Swift SDK](https://github.com/absmartly/swift-sdk)
+- [Vue2 SDK](https://github.com/absmartly/vue2-sdk)
+- [Vue3 SDK](https://github.com/absmartly/vue3-sdk)
+- [React SDK](https://github.com/absmartly/react-sdk)
+- [Angular SDK](https://github.com/absmartly/angular-sdk)
+- [Python3 SDK](https://github.com/absmartly/python3-sdk)
+- [Go SDK](https://github.com/absmartly/go-sdk)
+- [Ruby SDK](https://github.com/absmartly/ruby-sdk)
+- [.NET SDK](https://github.com/absmartly/dotnet-sdk)
+- [C++ SDK](https://github.com/absmartly/cpp-sdk) (this package)
+- [Dart SDK](https://github.com/absmartly/dart-sdk)
+- [Flutter SDK](https://github.com/absmartly/flutter-sdk)

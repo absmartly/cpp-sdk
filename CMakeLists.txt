@@ -13,6 +13,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(json)
 
 add_library(absmartly-sdk
+  src/curl_global.cpp
   src/md5.cpp
   src/murmur3.cpp
   src/variant_assigner.cpp

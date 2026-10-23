@@ -2582,8 +2582,17 @@ TEST_CASE("Reads during finalize report finalizing", "[context][errors]") {
         std::future<void> publish(const PublishEvent&) override {
             try {
                 context->treatment("exp_test_ab");
+            } catch (const ContextFinalizingException& e) {
+                message = e.what();
+                caught_finalizing = true;
             } catch (const std::exception& e) {
                 message = e.what();
+            }
+            try {
+                context->peek("exp_test_ab");
+            } catch (const ContextFinalizedException&) {
+                caught_as_finalized = true;
+            } catch (...) {
             }
             std::promise<void> p;
             p.set_value();
@@ -2591,6 +2600,8 @@ TEST_CASE("Reads during finalize report finalizing", "[context][errors]") {
         }
         Context* context = nullptr;
         std::string message;
+        bool caught_finalizing = false;
+        bool caught_as_finalized = false;
     };
 
     auto publisher = std::make_shared<ReadingPublisher>();
@@ -2600,4 +2611,6 @@ TEST_CASE("Reads during finalize report finalizing", "[context][errors]") {
     ctx.finalize();
 
     REQUIRE(publisher->message == "ABsmartly Context is finalizing.");
+    REQUIRE(publisher->caught_finalizing);
+    REQUIRE(publisher->caught_as_finalized);
 }

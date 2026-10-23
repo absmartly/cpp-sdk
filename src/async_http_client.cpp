@@ -1,19 +1,19 @@
 #include "absmartly/async_http_client.h"
 
+#include "curl_global.h"
+
 #include <sstream>
 #include <mutex>
+#include <stdexcept>
 
 namespace absmartly {
 
-static std::once_flag curl_init_flag;
-
-static void ensure_curl_initialized() {
-    std::call_once(curl_init_flag, [] { curl_global_init(CURL_GLOBAL_ALL); });
-}
-
 AsyncHTTPClient::AsyncHTTPClient() {
-    ensure_curl_initialized();
+    detail::ensure_curl_global_init();
     multi_ = curl_multi_init();
+    if (!multi_) {
+        throw std::runtime_error("Failed to initialise CURL multi handle");
+    }
     worker_ = std::thread(&AsyncHTTPClient::event_loop, this);
 }
 
@@ -257,6 +257,12 @@ std::string AsyncHTTPClient::build_url_with_query(const std::string& url,
 
             char* encoded_key = curl_easy_escape(curl, key.c_str(), static_cast<int>(key.size()));
             char* encoded_value = curl_easy_escape(curl, value.c_str(), static_cast<int>(value.size()));
+            if (!encoded_key || !encoded_value) {
+                curl_free(encoded_key);
+                curl_free(encoded_value);
+                curl_easy_cleanup(curl);
+                throw std::runtime_error("Failed to URL-encode query parameter");
+            }
             oss << encoded_key << '=' << encoded_value;
             curl_free(encoded_key);
             curl_free(encoded_value);

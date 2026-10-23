@@ -102,6 +102,9 @@ TEST_CASE("Evaluator::to_string_value", "[evaluator][string]") {
         REQUIRE(Evaluator::to_string_value(1).value() == "1");
         REQUIRE(Evaluator::to_string_value(-1).value() == "-1");
         REQUIRE(Evaluator::to_string_value(1.5).value() == "1.5");
+        REQUIRE(Evaluator::to_string_value(1e23).value() == "1e+23");
+        REQUIRE(Evaluator::to_string_value(1.5e22).value() == "1.5e+22");
+        REQUIRE(Evaluator::to_string_value(1e21).value() == "1e+21");
         REQUIRE(Evaluator::to_string_value(2.0).value() == "2");
         REQUIRE(Evaluator::to_string_value(3.0).value() == "3");
         REQUIRE(Evaluator::to_string_value(-1.0).value() == "-1");
