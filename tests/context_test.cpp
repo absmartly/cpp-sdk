@@ -1395,6 +1395,23 @@ TEST_CASE("Context units", "[context]") {
         REQUIRE(event.units[0].uid == hash_unit(std::string("126")));
     }
 
+    SECTION("the same JS Number keeps the first uid and its hash") {
+        ContextConfig config;
+        config.publish_delay = -1;
+        config.units = {{"user_id", 1000000000000000129LL}};
+        Context ctx(config, data);
+        ctx.track("goal1");
+        auto first = ctx.publish();
+
+        REQUIRE_NOTHROW(ctx.set_unit("user_id", 1000000000000000128.0));
+        REQUIRE(ctx.get_unit("user_id").value().is_number_integer());
+        REQUIRE_THROWS(ctx.set_unit("user_id", "1000000000000000128"));
+        ctx.track("goal1");
+        auto second = ctx.publish();
+        REQUIRE(first.units[0].uid == hash_unit(std::string("1000000000000000128")));
+        REQUIRE(second.units[0].uid == first.units[0].uid);
+    }
+
     SECTION("trims string uids and rejects whitespace-only ones") {
         ContextConfig config;
         config.publish_delay = -1;

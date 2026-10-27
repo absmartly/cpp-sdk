@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "absmartly/hashing.h"
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,11 @@ TEST_CASE("hash_unit of a number rounds like JS toFixed(0)", "[utils]") {
     REQUIRE(unit_to_string(json("125.75")) == "125.75");
     REQUIRE(hash_unit(json(125.75)) == hash_unit("126"));
     REQUIRE(hash_unit(json(123456778999)) == "K4uy4bTeCy34W97lmceVRg");
+    // JS: Number(1000000000000000129).toFixed(0) === "1000000000000000128"
+    REQUIRE(unit_to_string(json(1000000000000000129LL)) == "1000000000000000128");
+    REQUIRE(unit_to_string(json(1000000000000000129ULL)) == "1000000000000000128");
+    REQUIRE(unit_to_string(json(1000000000000000128.0)) == "1000000000000000128");
+    REQUIRE(unit_to_string(json(std::numeric_limits<double>::max())) == "1.7976931348623157e+308");
 }
 
 TEST_CASE("choose_variant with [0.0, 1.0] split", "[utils]") {

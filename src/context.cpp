@@ -188,8 +188,16 @@ void Context::store_unit(const std::string& unit_type, const nlohmann::json& uid
     }
 
     auto it = units_.find(unit_type);
-    if (it != units_.end() && it->second != value) {
-        throw std::runtime_error("Unit '" + unit_type + "' UID already set.");
+    if (it != units_.end()) {
+        // Numbers compare as JavaScript Numbers (doubles); the first value is kept.
+        const auto& prev = it->second;
+        bool same = prev.is_number() && value.is_number()
+            ? prev.get<double>() == value.get<double>()
+            : prev == value;
+        if (!same) {
+            throw std::runtime_error("Unit '" + unit_type + "' UID already set.");
+        }
+        return;
     }
 
     units_[unit_type] = value;

@@ -120,7 +120,8 @@ std::optional<std::string> Evaluator::to_string_value(const nlohmann::json& valu
                 oss.imbue(std::locale::classic());
                 oss << std::setprecision(precision) << d;
                 out = oss.str();
-                if (!std::isfinite(d) || std::stod(out) == d) {
+                // strtod, not stod: a short candidate can round past DBL_MAX.
+                if (!std::isfinite(d) || std::strtod(out.c_str(), nullptr) == d) {
                     break;
                 }
             }

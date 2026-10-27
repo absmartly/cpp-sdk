@@ -1,3 +1,4 @@
+#include <limits>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -103,6 +104,8 @@ TEST_CASE("Evaluator::to_string_value", "[evaluator][string]") {
         REQUIRE(Evaluator::to_string_value(-1).value() == "-1");
         REQUIRE(Evaluator::to_string_value(1.5).value() == "1.5");
         REQUIRE(Evaluator::to_string_value(1e23).value() == "1e+23");
+        REQUIRE(Evaluator::to_string_value(1.79e308).value() == "1.79e+308");
+        REQUIRE(Evaluator::to_string_value(std::numeric_limits<double>::max()).value() == "1.7976931348623157e+308");
         REQUIRE(Evaluator::to_string_value(1.5e22).value() == "1.5e+22");
         REQUIRE(Evaluator::to_string_value(1e21).value() == "1e+21");
         REQUIRE(Evaluator::to_string_value(2.0).value() == "2");

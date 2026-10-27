@@ -62,13 +62,9 @@ std::string unit_to_string(const nlohmann::json& unit) {
     if (unit.is_string()) {
         return unit.get<std::string>();
     }
-    if (unit.is_number_unsigned()) {
-        return std::to_string(unit.get<uint64_t>());
-    }
-    if (unit.is_number_integer()) {
-        return std::to_string(unit.get<int64_t>());
-    }
-    if (unit.is_number_float()) {
+    if (unit.is_number()) {
+        // Every number is a JavaScript Number (a double), so 64-bit integers
+        // above 2^53 hash as their nearest double, as in JS.
         double d = unit.get<double>();
         if (!std::isfinite(d) || std::abs(d) >= 1e21) {
             // toFixed falls back to the shortest round-trip form here.
@@ -80,7 +76,8 @@ std::string unit_to_string(const nlohmann::json& unit) {
                 oss.imbue(std::locale::classic());
                 oss << std::setprecision(precision) << d;
                 out = oss.str();
-                if (std::stod(out) == d) break;
+                // A short candidate can round past DBL_MAX; keep searching.
+                if (std::strtod(out.c_str(), nullptr) == d) break;
             }
             return out;
         }
