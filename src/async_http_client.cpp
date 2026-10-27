@@ -66,7 +66,7 @@ std::future<HTTPClient::Response> AsyncHTTPClient::get(
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_HTTPGET, 1L);
 
-    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), {});
+    return enqueue(easy, detail::build_url_with_query(url, query), detail::build_header_list(headers), {});
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::put(
@@ -87,7 +87,7 @@ std::future<HTTPClient::Response> AsyncHTTPClient::put(
     // The "PUT" method override is applied inside enqueue() AFTER the request body
     // is set. Setting CURLOPT_CUSTOMREQUEST before CURLOPT_POSTFIELDS makes libcurl
     // switch to upload (read-callback) mode and fail with CURLE_READ_ERROR.
-    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers),
+    return enqueue(easy, detail::build_url_with_query(url, query), detail::build_header_list(headers),
                    body, "PUT");
 }
 
@@ -107,7 +107,7 @@ std::future<HTTPClient::Response> AsyncHTTPClient::post(
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_POST, 1L);
 
-    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), body);
+    return enqueue(easy, detail::build_url_with_query(url, query), detail::build_header_list(headers), body);
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
@@ -137,7 +137,7 @@ std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
         curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method_override);
     }
 
-    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, detail::write_callback);
     curl_easy_setopt(easy, CURLOPT_WRITEDATA, &req->response_body);
 
     auto future = req->promise.get_future();
@@ -235,19 +235,6 @@ void AsyncHTTPClient::process_completed() {
         req->promise.set_value(std::move(response));
         delete req;
     }
-}
-
-std::string AsyncHTTPClient::build_url_with_query(const std::string& url,
-                                                   const std::map<std::string, std::string>& query) {
-    return detail::build_url_with_query(url, query);
-}
-
-struct curl_slist* AsyncHTTPClient::build_header_list(const std::map<std::string, std::string>& headers) {
-    return detail::build_header_list(headers);
-}
-
-size_t AsyncHTTPClient::write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    return detail::write_callback(ptr, size, nmemb, userdata);
 }
 
 } // namespace absmartly

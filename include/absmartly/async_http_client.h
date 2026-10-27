@@ -49,10 +49,6 @@ private:
     void event_loop();
     void process_completed();
 
-    static std::string build_url_with_query(const std::string& url,
-                                            const std::map<std::string, std::string>& query);
-    static struct curl_slist* build_header_list(const std::map<std::string, std::string>& headers);
-    static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata);
 
     CURLM* multi_;
     std::thread worker_;
