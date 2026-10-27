@@ -70,10 +70,10 @@ public:
     const ContextData& data() const;
     std::vector<std::string> experiments();
 
-    void set_unit(const std::string& unit_type, const std::string& uid);
-    void set_units(const std::map<std::string, std::string>& units);
-    std::optional<std::string> get_unit(const std::string& unit_type) const;
-    std::map<std::string, std::string> get_units() const;
+    void set_unit(const std::string& unit_type, const nlohmann::json& uid);
+    void set_units(const std::map<std::string, nlohmann::json>& units);
+    std::optional<nlohmann::json> get_unit(const std::string& unit_type) const;
+    std::map<std::string, nlohmann::json> get_units() const;
 
     void set_attribute(const std::string& name, const nlohmann::json& value);
     void set_attributes(const std::map<std::string, nlohmann::json>& attrs);
@@ -126,6 +126,7 @@ private:
 
     void emit_event(const std::string& type, const nlohmann::json& data = nlohmann::json());
     void setup_from_config();
+    void store_unit(const std::string& unit_type, const nlohmann::json& uid);
     void become_ready(ContextData data);
     void become_failed(const std::string& error);
 
@@ -138,7 +139,7 @@ private:
     bool finalizing_ = false;
     int pending_ = 0;
 
-    std::map<std::string, std::string> units_;
+    std::map<std::string, nlohmann::json> units_;
     std::vector<Attribute> attrs_;
     int attrs_seq_ = 0;
 

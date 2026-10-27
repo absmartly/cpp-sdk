@@ -1,5 +1,11 @@
 #include "absmartly/hashing.h"
+#include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
 
 namespace absmartly {
 
@@ -50,6 +56,45 @@ std::string base64url_no_padding(const uint8_t* data, size_t len) {
 std::string hash_unit(const std::string& unit) {
     auto raw = md5_raw(unit);
     return base64url_no_padding(raw.data(), raw.size());
+}
+
+std::string unit_to_string(const nlohmann::json& unit) {
+    if (unit.is_string()) {
+        return unit.get<std::string>();
+    }
+    if (unit.is_number_unsigned()) {
+        return std::to_string(unit.get<uint64_t>());
+    }
+    if (unit.is_number_integer()) {
+        return std::to_string(unit.get<int64_t>());
+    }
+    if (unit.is_number_float()) {
+        double d = unit.get<double>();
+        if (!std::isfinite(d) || std::abs(d) >= 1e21) {
+            // toFixed falls back to the shortest round-trip form here.
+            if (std::isnan(d)) return "NaN";
+            if (std::isinf(d)) return d < 0 ? "-Infinity" : "Infinity";
+            std::string out;
+            for (int precision = 1; precision <= 17; ++precision) {
+                std::ostringstream oss;
+                oss.imbue(std::locale::classic());
+                oss << std::setprecision(precision) << d;
+                out = oss.str();
+                if (std::stod(out) == d) break;
+            }
+            return out;
+        }
+        // toFixed(0): the nearest integer, ties to the larger magnitude, and a
+        // "-" sign for any negative input (-0.4 -> "-0").
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.0f", std::round(std::abs(d)));
+        return (d < 0 ? "-" : "") + std::string(buf);
+    }
+    throw std::invalid_argument("unit uid must be a string or a number");
+}
+
+std::string hash_unit(const nlohmann::json& unit) {
+    return hash_unit(unit_to_string(unit));
 }
 
 int choose_variant(const std::vector<double>& split, double probability) {

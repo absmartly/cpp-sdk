@@ -918,6 +918,17 @@ TEST_CASE("Context track", "[context]") {
         ctx.finalize();
         REQUIRE_THROWS_AS(ctx.track("goal1", {{"amount", 125}}), ContextFinalizedException);
     }
+
+    SECTION("rejects properties that are not an object") {
+        auto config = make_test_config();
+        Context ctx(config, data);
+
+        for (const auto& bad : {nlohmann::json(1), nlohmann::json("str"), nlohmann::json::array({1})}) {
+            REQUIRE_THROWS_WITH(ctx.track("goal1", bad),
+                                "Goal 'goal1' properties must be of type object.");
+        }
+        REQUIRE(ctx.pending() == 0);
+    }
 }
 
 TEST_CASE("Context publish", "[context]") {
@@ -1358,6 +1369,52 @@ TEST_CASE("Context units", "[context]") {
         Context ctx(config, data);
         ctx.finalize();
         REQUIRE_THROWS_AS(ctx.set_unit("test", "test"), ContextFinalizedException);
+    }
+
+    SECTION("keeps the type of numeric uids") {
+        ContextConfig config;
+        config.publish_delay = -1;
+        config.units = {{"user_id", 125}, {"float_id", 125.75}};
+        Context ctx(config, data);
+
+        REQUIRE(ctx.get_unit("user_id").value() == nlohmann::json(125));
+        REQUIRE(ctx.get_unit("user_id").value().is_number_integer());
+        REQUIRE(ctx.get_unit("float_id").value() == nlohmann::json(125.75));
+        REQUIRE(ctx.get_units().at("float_id").is_number_float());
+    }
+
+    SECTION("hashes a fractional uid the way JS does") {
+        ContextConfig config;
+        config.publish_delay = -1;
+        config.units = {{"float_id", 125.75}};
+        Context ctx(config, data);
+        ctx.track("goal1");
+
+        auto event = ctx.publish();
+        REQUIRE(event.units.size() == 1);
+        REQUIRE(event.units[0].uid == hash_unit(std::string("126")));
+    }
+
+    SECTION("trims string uids and rejects whitespace-only ones") {
+        ContextConfig config;
+        config.publish_delay = -1;
+        Context ctx(config, data);
+
+        REQUIRE_THROWS_WITH(ctx.set_unit("session_id", "   "),
+                            "Unit 'session_id' UID must not be blank.");
+        ctx.set_unit("session_id", "  abc ");
+        REQUIRE(ctx.get_unit("session_id").value() == "abc");
+    }
+
+    SECTION("rejects uids that are not strings or numbers") {
+        ContextConfig config;
+        config.publish_delay = -1;
+        Context ctx(config, data);
+
+        REQUIRE_THROWS_WITH(ctx.set_unit("session_id", nlohmann::json::object()),
+                            "Unit 'session_id' must be a string or a number.");
+        REQUIRE_THROWS_WITH(ctx.set_unit("session_id", true),
+                            "Unit 'session_id' must be a string or a number.");
     }
 }
 

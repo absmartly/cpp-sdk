@@ -15,6 +15,18 @@ TEST_CASE("hash_unit with numeric string", "[utils]") {
     REQUIRE(hash_unit("123456778999") == "K4uy4bTeCy34W97lmceVRg");
 }
 
+TEST_CASE("hash_unit of a number rounds like JS toFixed(0)", "[utils]") {
+    using nlohmann::json;
+    REQUIRE(unit_to_string(json(125.75)) == "126");
+    REQUIRE(unit_to_string(json(125.5)) == "126");
+    REQUIRE(unit_to_string(json(-1.5)) == "-2");
+    REQUIRE(unit_to_string(json(125)) == "125");
+    REQUIRE(unit_to_string(json(125.0)) == "125");
+    REQUIRE(unit_to_string(json("125.75")) == "125.75");
+    REQUIRE(hash_unit(json(125.75)) == hash_unit("126"));
+    REQUIRE(hash_unit(json(123456778999)) == "K4uy4bTeCy34W97lmceVRg");
+}
+
 TEST_CASE("choose_variant with [0.0, 1.0] split", "[utils]") {
     REQUIRE(choose_variant({0.0, 1.0}, 0.0) == 1);
     REQUIRE(choose_variant({0.0, 1.0}, 0.5) == 1);

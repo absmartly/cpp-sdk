@@ -55,7 +55,7 @@ Context::Context(const ContextConfig& config, std::future<ContextData> data_futu
 
 void Context::setup_from_config() {
     for (const auto& [type, uid] : config_.units) {
-        units_[type] = uid;
+        store_unit(type, uid);
     }
 
     for (const auto& [name, variant] : config_.overrides) {
@@ -167,28 +167,41 @@ std::vector<std::string> Context::experiments() {
     return result;
 }
 
-void Context::set_unit(const std::string& unit_type, const std::string& uid) {
+void Context::set_unit(const std::string& unit_type, const nlohmann::json& uid) {
     check_not_finalized();
+    store_unit(unit_type, uid);
+}
 
-    if (uid.empty()) {
-        throw std::runtime_error("Unit '" + unit_type + "' UID must not be blank.");
+void Context::store_unit(const std::string& unit_type, const nlohmann::json& uid) {
+    nlohmann::json value = uid;
+    if (value.is_string()) {
+        static const char* ws = " \t\n\r\f\v";
+        std::string s = value.get<std::string>();
+        auto first = s.find_first_not_of(ws);
+        s = first == std::string::npos ? std::string() : s.substr(first, s.find_last_not_of(ws) - first + 1);
+        if (s.empty()) {
+            throw std::runtime_error("Unit '" + unit_type + "' UID must not be blank.");
+        }
+        value = s;
+    } else if (!value.is_number()) {
+        throw std::runtime_error("Unit '" + unit_type + "' must be a string or a number.");
     }
 
     auto it = units_.find(unit_type);
-    if (it != units_.end() && it->second != uid) {
+    if (it != units_.end() && it->second != value) {
         throw std::runtime_error("Unit '" + unit_type + "' UID already set.");
     }
 
-    units_[unit_type] = uid;
+    units_[unit_type] = value;
 }
 
-void Context::set_units(const std::map<std::string, std::string>& units) {
+void Context::set_units(const std::map<std::string, nlohmann::json>& units) {
     for (const auto& [type, uid] : units) {
         set_unit(type, uid);
     }
 }
 
-std::optional<std::string> Context::get_unit(const std::string& unit_type) const {
+std::optional<nlohmann::json> Context::get_unit(const std::string& unit_type) const {
     auto it = units_.find(unit_type);
     if (it != units_.end()) {
         return it->second;
@@ -196,7 +209,7 @@ std::optional<std::string> Context::get_unit(const std::string& unit_type) const
     return std::nullopt;
 }
 
-std::map<std::string, std::string> Context::get_units() const {
+std::map<std::string, nlohmann::json> Context::get_units() const {
     return units_;
 }
 
@@ -419,19 +432,19 @@ std::vector<std::string> Context::custom_field_keys() {
 void Context::track(const std::string& goal_name, const nlohmann::json& properties) {
     check_not_finalized();
 
+    if (!properties.is_null() && !properties.is_object()) {
+        throw std::runtime_error("Goal '" + goal_name + "' properties must be of type object.");
+    }
+
     GoalAchievement goal;
     goal.name = goal_name;
     goal.achievedAt = now_millis();
-    goal.properties = properties.is_object() ? properties : nlohmann::json(nullptr);
+    goal.properties = properties;
 
     nlohmann::json goal_data;
     goal_data["name"] = goal.name;
     goal_data["achievedAt"] = goal.achievedAt;
-    if (properties.is_null() || !properties.is_object()) {
-        goal_data["properties"] = nullptr;
-    } else {
-        goal_data["properties"] = properties;
-    }
+    goal_data["properties"] = properties;
 
     goals_.push_back(std::move(goal));
     pending_++;
