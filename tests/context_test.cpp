@@ -822,6 +822,35 @@ TEST_CASE("Malformed variant config emits a diagnostic and keeps defaults", "[co
     REQUIRE(handler->events[0].data["variant"] == 0);
 }
 
+TEST_CASE("Variant numeric overflow stays isolated in both construction modes", "[context]") {
+    auto data = make_test_data();
+    data.experiments[0].variants[0].config = R"({"threshold":1e400})";
+    data.experiments[1].fullOnVariant = 1;
+    auto handler = std::make_shared<MockEventHandler>();
+    std::unique_ptr<Context> ctx;
+
+    SECTION("synchronous data") {
+        ctx = std::make_unique<Context>(make_test_config(), data, handler);
+    }
+    SECTION("future-backed data") {
+        std::promise<ContextData> promise;
+        promise.set_value(data);
+        ctx = std::make_unique<Context>(make_test_config(), promise.get_future(), handler);
+        ctx->wait_until_ready();
+    }
+
+    REQUIRE(ctx->is_ready());
+    REQUIRE_FALSE(ctx->is_failed());
+    REQUIRE(ctx->experiments().size() == data.experiments.size());
+    REQUIRE(ctx->treatment(data.experiments[1].name) == 1);
+    REQUIRE(ctx->peek_variable_value("threshold", "default") == "default");
+    REQUIRE(handler->count_events("error") == 1);
+    REQUIRE(handler->events[0].data["message"] ==
+            "Failed to parse variant config for " + data.experiments[0].name);
+    REQUIRE(handler->events[0].data["error"].get<std::string>().find("overflow") != std::string::npos);
+    REQUIRE(handler->events[0].data["variant"] == 0);
+}
+
 TEST_CASE("Context overrides", "[context]") {
     auto data = make_test_data();
     auto config = make_test_config();

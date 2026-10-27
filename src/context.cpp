@@ -494,7 +494,6 @@ PublishEvent Context::flush() {
             pending_ += published;
         };
 
-        // publish() waits for delivery before reporting success.
         try {
             std::future<void> publish_future = event_publisher_->publish(event);
             if (publish_future.valid()) {
@@ -750,7 +749,7 @@ void Context::build_index() {
                                 parsed[it.key()] = it.value();
                             }
                         }
-                    } catch (const nlohmann::json::parse_error& e) {
+                    } catch (const nlohmann::json::exception& e) {
                         emit_event("error", {{"message", "Failed to parse variant config for " + exp.name},
                                              {"error", e.what()}, {"variant", i}});
                     }
