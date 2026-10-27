@@ -28,8 +28,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -42,11 +40,10 @@
 
 namespace {
 
-// A single captured HTTP request as seen by the local server.
 struct CapturedRequest {
     std::string method;
-    std::string path;   // includes query string, e.g. "/v1/context?application=..."
-    std::map<std::string, std::string> headers; // lower-cased header names
+    std::string path;
+    std::map<std::string, std::string> headers;
     std::string body;
 };
 
@@ -55,14 +52,12 @@ std::string to_lower(std::string s) {
     return s;
 }
 
-// Read until we have the full headers + (if present) Content-Length bytes of body.
 bool read_request(int fd, CapturedRequest& out) {
     std::string buffer;
     char chunk[4096];
 
     auto header_end = [&]() { return buffer.find("\r\n\r\n"); };
 
-    // Read until end of headers.
     while (header_end() == std::string::npos) {
         ssize_t n = ::recv(fd, chunk, sizeof(chunk), 0);
         if (n <= 0) return false;
@@ -73,7 +68,6 @@ bool read_request(int fd, CapturedRequest& out) {
     std::string head = buffer.substr(0, headers_len);
     std::string rest = buffer.substr(headers_len + 4);
 
-    // Request line.
     size_t line_end = head.find("\r\n");
     std::string request_line = head.substr(0, line_end);
     {
@@ -83,7 +77,6 @@ bool read_request(int fd, CapturedRequest& out) {
         out.path = request_line.substr(sp1 + 1, sp2 - sp1 - 1);
     }
 
-    // Headers.
     size_t pos = line_end + 2;
     size_t content_length = 0;
     while (pos < head.size()) {
@@ -95,7 +88,6 @@ bool read_request(int fd, CapturedRequest& out) {
         if (colon != std::string::npos) {
             std::string name = to_lower(line.substr(0, colon));
             std::string value = line.substr(colon + 1);
-            // trim leading spaces.
             size_t start = value.find_first_not_of(" \t");
             value = (start == std::string::npos) ? "" : value.substr(start);
             out.headers[name] = value;
@@ -103,7 +95,6 @@ bool read_request(int fd, CapturedRequest& out) {
         }
     }
 
-    // Body (read remaining bytes if a Content-Length was given).
     std::string body = rest;
     while (body.size() < content_length) {
         ssize_t n = ::recv(fd, chunk, sizeof(chunk), 0);
@@ -124,8 +115,6 @@ void send_response(int fd, int status, const std::string& status_text,
     ::send(fd, resp.data(), resp.size(), 0);
 }
 
-// A tiny hermetic HTTP server bound to an ephemeral loopback port. It serves
-// exactly two requests (a GET then a PUT) and records what it saw.
 class LocalServer {
 public:
     LocalServer() {
@@ -155,7 +144,6 @@ public:
 
     uint16_t port() const { return port_; }
 
-    // Serve `count` requests on a background thread.
     void start(int count) {
         thread_ = std::thread([this, count]() {
             for (int i = 0; i < count; ++i) {
@@ -184,20 +172,6 @@ public:
         return requests_;
     }
 
-    // Block (up to `timeout`) until at least `n` requests have been recorded.
-    bool wait_for_requests(size_t n, std::chrono::milliseconds timeout) {
-        auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (std::chrono::steady_clock::now() < deadline) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                if (requests_.size() >= n) return true;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        std::lock_guard<std::mutex> lock(mutex_);
-        return requests_.size() >= n;
-    }
-
 private:
     int listen_fd_ = -1;
     uint16_t port_ = 0;
@@ -210,7 +184,6 @@ private:
 
 TEST_CASE("Real HTTP client hits local server with the wire contract", "[integration][http]") {
     LocalServer server;
-    // We expect two requests: the GET (createContext) and the PUT (publish).
     server.start(2);
 
     const std::string endpoint = "http://127.0.0.1:" + std::to_string(server.port());
@@ -221,7 +194,6 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     client_config.application = "www";
     client_config.environment = "test";
 
-    // Default (async, libcurl-multi) client path — this is what SDK users get.
     auto sdk = absmartly::SDK::create_simple(client_config, absmartly::HTTPMode::async);
 
     absmartly::ContextConfig context_config;
@@ -234,33 +206,25 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     REQUIRE(ctx->is_ready());
     REQUIRE_FALSE(ctx->is_failed());
 
-    // Queue an event so publish() has something to send.
     ctx->track("payment", {{"amount", 1000}});
     REQUIRE(ctx->pending() > 0);
 
     auto event = ctx->publish();
 
-    // publish() dispatches the PUT asynchronously; wait until the server records it.
-    REQUIRE(server.wait_for_requests(2, std::chrono::seconds(5)));
-
     auto requests = server.requests();
     REQUIRE(requests.size() == 2);
 
-    // ---- GET /context (fetch -> ready) ----
     const auto& get = requests[0];
     REQUIRE(get.method == "GET");
     REQUIRE(get.path.substr(0, get.path.find('?')) == "/context");
     REQUIRE(get.path.find("application=www") != std::string::npos);
     REQUIRE(get.path.find("environment=test") != std::string::npos);
 
-    // ---- PUT /context (publish) ----
     const auto& put = requests[1];
     REQUIRE(put.method == "PUT");
     REQUIRE(put.path == "/context");
-    // No query params on the PUT path.
     REQUIRE(put.path.find('?') == std::string::npos);
 
-    // Required auth / identity headers (exact names per the wire contract).
     REQUIRE(put.headers.at("x-api-key") == "test-api-key");
     REQUIRE(put.headers.at("x-application") == "www");
     REQUIRE(put.headers.at("x-environment") == "test");
@@ -269,7 +233,6 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     REQUIRE_FALSE(put.headers.at("x-agent").empty()); // value varies per SDK
     REQUIRE(put.headers.at("content-type").find("application/json") != std::string::npos);
 
-    // Body must carry the required publish fields.
     auto body = nlohmann::json::parse(put.body);
     REQUIRE(body.contains("hashed"));
     REQUIRE(body["hashed"].is_boolean());
@@ -277,12 +240,10 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     REQUIRE(body["units"].is_array());
     REQUIRE(body.contains("publishedAt"));
     REQUIRE(body["publishedAt"].get<int64_t>() > 0);
-    // We tracked a goal, so goals must be present and non-empty.
     REQUIRE(body.contains("goals"));
     REQUIRE(body["goals"].is_array());
     REQUIRE_FALSE(body["goals"].empty());
     REQUIRE(body["goals"][0]["name"] == "payment");
 
-    // The publish() call itself returns the event it sent.
     REQUIRE(event.publishedAt > 0);
 }

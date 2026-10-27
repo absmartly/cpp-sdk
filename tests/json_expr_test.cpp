@@ -389,6 +389,32 @@ TEST_CASE("JsonExpr integration tests", "[evaluator][integration]") {
         binary_op("eq", var_for("language"), value_for("es-ES"))
     });
 
+    SECTION("null checks missing and explicit null fields") {
+        auto missing = unary_op("null", var_for("missing"));
+        REQUIRE(evaluator.evaluate_boolean(missing, john));
+        john["missing"] = nullptr;
+        REQUIRE(evaluator.evaluate_boolean(missing, john));
+        REQUIRE_FALSE(evaluator.evaluate_boolean(unary_op("null", var_for("age")), john));
+    }
+
+    SECTION("membership is haystack-first and preserves null results") {
+        auto english = binary_op("in", value_for(json::array({"en-US", "en-GB"})), var_for("language"));
+        REQUIRE(evaluator.evaluate_boolean(english, john));
+        REQUIRE(evaluator.evaluate_boolean(english, terry));
+        REQUIRE_FALSE(evaluator.evaluate_boolean(english, kate));
+        REQUIRE_FALSE(evaluator.evaluate_boolean(english, maria));
+        REQUIRE(evaluator.evaluate(binary_op("in", value_for(nullptr), var_for("language")), john).is_null());
+    }
+
+    SECTION("regex matching handles invalid patterns") {
+        auto english = binary_op("match", var_for("language"), value_for("^en-"));
+        REQUIRE(evaluator.evaluate_boolean(english, john));
+        REQUIRE(evaluator.evaluate_boolean(english, terry));
+        REQUIRE_FALSE(evaluator.evaluate_boolean(english, kate));
+        REQUIRE_FALSE(evaluator.evaluate_boolean(english, maria));
+        REQUIRE(evaluator.evaluate(binary_op("match", var_for("language"), value_for("[")), john).is_null());
+    }
+
     SECTION("AgeTwentyAndUS") {
         REQUIRE(evaluator.evaluate_boolean(age_twenty_and_us, john) == true);
         REQUIRE(evaluator.evaluate_boolean(age_twenty_and_us, terry) == false);

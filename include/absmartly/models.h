@@ -19,9 +19,7 @@ inline void to_json(nlohmann::json& j, const ExperimentVariant& v) {
 
 inline void from_json(const nlohmann::json& j, ExperimentVariant& v) {
     j.at("name").get_to(v.name);
-    if (j.contains("config")) {
-        v.config = j.at("config");
-    }
+    v.config = j.value("config", nlohmann::json());
 }
 
 struct CustomFieldValue {
@@ -216,9 +214,7 @@ inline void to_json(nlohmann::json& j, const GoalAchievement& g) {
 inline void from_json(const nlohmann::json& j, GoalAchievement& g) {
     j.at("name").get_to(g.name);
     j.at("achievedAt").get_to(g.achievedAt);
-    if (j.contains("properties")) {
-        g.properties = j.at("properties");
-    }
+    g.properties = j.value("properties", nlohmann::json());
 }
 
 struct Attribute {
@@ -233,7 +229,7 @@ inline void to_json(nlohmann::json& j, const Attribute& a) {
 
 inline void from_json(const nlohmann::json& j, Attribute& a) {
     j.at("name").get_to(a.name);
-    if (j.contains("value")) a.value = j.at("value");
+    a.value = j.value("value", nlohmann::json());
     j.at("setAt").get_to(a.setAt);
 }
 

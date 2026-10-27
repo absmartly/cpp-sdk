@@ -1,4 +1,5 @@
 #include "absmartly/hashing.h"
+#include "number_format.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -70,16 +71,7 @@ std::string unit_to_string(const nlohmann::json& unit) {
             // toFixed falls back to the shortest round-trip form here.
             if (std::isnan(d)) return "NaN";
             if (std::isinf(d)) return d < 0 ? "-Infinity" : "Infinity";
-            std::string out;
-            for (int precision = 1; precision <= 17; ++precision) {
-                std::ostringstream oss;
-                oss.imbue(std::locale::classic());
-                oss << std::setprecision(precision) << d;
-                out = oss.str();
-                // A short candidate can round past DBL_MAX; keep searching.
-                if (std::strtod(out.c_str(), nullptr) == d) break;
-            }
-            return out;
+            return detail::large_number_to_string(d);
         }
         // toFixed(0): the nearest integer, ties to the larger magnitude, and a
         // "-" sign for any negative input (-0.4 -> "-0").

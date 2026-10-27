@@ -14,14 +14,6 @@ static int64_t now_millis() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 }
 
-static bool array_equals_shallow(const std::vector<double>& a, const std::vector<double>& b) {
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i] != b[i]) return false;
-    }
-    return true;
-}
-
 template <typename T>
 static void prepend_all(std::vector<T>& queue, std::vector<T>& items) {
     queue.insert(queue.begin(),
@@ -33,11 +25,10 @@ Context::Context(const ContextConfig& config, ContextData data,
                  std::shared_ptr<ContextEventLogger> event_handler,
                  std::shared_ptr<ContextPublisher> event_publisher,
                  std::shared_ptr<ContextDataProvider> data_provider)
-    : config_(config)
-    , event_handler_(std::move(event_handler))
+    : event_handler_(std::move(event_handler))
     , event_publisher_(std::move(event_publisher))
     , data_provider_(std::move(data_provider)) {
-    setup_from_config();
+    setup_from_config(config);
     become_ready(std::move(data));
 }
 
@@ -45,31 +36,24 @@ Context::Context(const ContextConfig& config, std::future<ContextData> data_futu
                  std::shared_ptr<ContextEventLogger> event_handler,
                  std::shared_ptr<ContextPublisher> event_publisher,
                  std::shared_ptr<ContextDataProvider> data_provider)
-    : config_(config)
-    , event_handler_(std::move(event_handler))
+    : event_handler_(std::move(event_handler))
     , event_publisher_(std::move(event_publisher))
     , data_provider_(std::move(data_provider))
     , data_future_(std::move(data_future)) {
-    setup_from_config();
+    setup_from_config(config);
 }
 
-void Context::setup_from_config() {
-    for (const auto& [type, uid] : config_.units) {
+void Context::setup_from_config(const ContextConfig& config) {
+    for (const auto& [type, uid] : config.units) {
         store_unit(type, uid);
     }
-
-    for (const auto& [name, variant] : config_.overrides) {
-        overrides_[name] = variant;
-    }
-
-    for (const auto& [name, variant] : config_.custom_assignments) {
-        cassignments_[name] = variant;
-    }
+    overrides_ = config.overrides;
+    cassignments_ = config.custom_assignments;
 }
 
 void Context::become_ready(ContextData data) {
     data_ = std::move(data);
-    init(data_);
+    build_index();
     ready_ = true;
 
     nlohmann::json ready_data;
@@ -113,12 +97,7 @@ void Context::wait_until_ready() {
 bool Context::is_ready() {
     if (!ready_ && !failed_ && data_future_.valid()) {
         if (data_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            try {
-                auto data = data_future_.get();
-                become_ready(std::move(data));
-            } catch (const std::exception& e) {
-                become_failed(e.what());
-            }
+            wait_until_ready();
         }
     }
     return ready_;
@@ -267,7 +246,6 @@ void Context::set_overrides(const std::map<std::string, int>& overrides) {
 }
 
 void Context::set_custom_assignment(const std::string& experiment_name, int variant) {
-    check_not_finalized();
     cassignments_[experiment_name] = variant;
 }
 
@@ -337,11 +315,9 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name);
 
-        if (assignment.has_variables) {
-            if ((assignment.assigned || assignment.overridden) &&
-                assignment.variables.count(key) > 0) {
-                return assignment.variables.at(key);
-            }
+        if (assignment.has_variables && (assignment.assigned || assignment.overridden) &&
+            assignment.variables.count(key) > 0) {
+            return assignment.variables.at(key);
         }
     }
 
@@ -390,7 +366,6 @@ nlohmann::json Context::custom_field_value(const std::string& experiment_name, c
             }
             if (field.type == "json") {
                 try {
-                    if (val == "null") return nullptr;
                     if (val.empty()) return "";
                     return nlohmann::json::parse(val);
                 } catch (const nlohmann::json::parse_error&) {
@@ -519,10 +494,7 @@ PublishEvent Context::flush() {
             pending_ += published;
         };
 
-        // Block until the publish HTTP request actually completes. The publisher
-        // returns a std::future for the in-flight request; discarding it here
-        // abandoned the request (events never reached the collector). publish()
-        // is synchronous, so wait for the result.
+        // publish() waits for delivery before reporting success.
         try {
             std::future<void> publish_future = event_publisher_->publish(event);
             if (publish_future.valid()) {
@@ -558,8 +530,6 @@ PublishEvent Context::finalize() {
     try {
         result = flush();
     } catch (...) {
-        // flush() has requeued the events. Leave the context open so the
-        // caller can retry finalize() instead of being stuck in "finalizing".
         finalizing_ = false;
         throw;
     }
@@ -578,7 +548,6 @@ PublishEvent Context::close() {
 void Context::refresh() {
     check_ready(true);
 
-    // A context whose load failed stays failed: refresh is a successful no-op.
     if (failed_) {
         return;
     }
@@ -641,18 +610,6 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     }
 
     Assignment assignment;
-    assignment.id = 0;
-    assignment.iteration = 0;
-    assignment.full_on_variant = 0;
-    assignment.variant = 0;
-    assignment.overridden = false;
-    assignment.assigned = false;
-    assignment.exposed = false;
-    assignment.eligible = true;
-    assignment.full_on = false;
-    assignment.custom = false;
-    assignment.audience_mismatch = false;
-    assignment.has_variables = false;
 
     if (has_override) {
         if (experiment != nullptr) {
@@ -760,29 +717,15 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
     exposure.custom = assignment.custom;
     exposure.audienceMismatch = assignment.audience_mismatch;
 
-    nlohmann::json exposure_data{
-        {"id", exposure.id},
-        {"name", exposure.name},
-        {"unit", exposure.unit.empty() ? nlohmann::json(nullptr) : nlohmann::json(exposure.unit)},
-        {"variant", exposure.variant},
-        {"exposedAt", exposure.exposedAt},
-        {"assigned", exposure.assigned},
-        {"eligible", exposure.eligible},
-        {"overridden", exposure.overridden},
-        {"fullOn", exposure.fullOn},
-        {"custom", exposure.custom},
-        {"audienceMismatch", exposure.audienceMismatch}
-    };
+    nlohmann::json exposure_data = exposure;
+    if (exposure.unit.empty()) {
+        exposure_data["unit"] = nullptr;
+    }
 
-    // Queue before notifying the event logger, so the exposure is never lost.
     exposures_.push_back(std::move(exposure));
     pending_++;
 
     emit_event("exposure", exposure_data);
-}
-
-void Context::init(const ContextData& /*data*/) {
-    build_index();
 }
 
 void Context::build_index() {
@@ -807,7 +750,9 @@ void Context::build_index() {
                                 parsed[it.key()] = it.value();
                             }
                         }
-                    } catch (...) {
+                    } catch (const nlohmann::json::parse_error& e) {
+                        emit_event("error", {{"message", "Failed to parse variant config for " + exp.name},
+                                             {"error", e.what()}, {"variant", i}});
                     }
                 }
             } else if (variant.config.is_object()) {
@@ -826,29 +771,10 @@ void Context::build_index() {
         for (const auto& var_map : entry.variables) {
             for (const auto& [key, _] : var_map) {
                 auto& vec = index_variables_[key];
-                bool found = false;
-                for (const auto* existing : vec) {
-                    if (existing->data == entry.data) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    bool inserted = false;
-                    for (auto it = vec.begin(); it != vec.end(); ++it) {
-                        if (entry.data->id < (*it)->data->id) {
-                            vec.insert(it, &entry);
-                            inserted = true;
-                            break;
-                        }
-                        if (entry.data->id == (*it)->data->id) {
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        vec.push_back(&entry);
-                    }
+                auto pos = std::lower_bound(vec.begin(), vec.end(), entry.data->id,
+                    [](const ExperimentIndex* existing, int id) { return existing->data->id < id; });
+                if (pos == vec.end() || (*pos)->data->id != entry.data->id) {
+                    vec.insert(pos, &entry);
                 }
             }
         }
@@ -860,7 +786,7 @@ bool Context::experiment_matches(const ExperimentData& experiment, const Assignm
         && experiment.unitType == assignment.unit_type
         && experiment.iteration == assignment.iteration
         && experiment.fullOnVariant == assignment.full_on_variant
-        && array_equals_shallow(experiment.trafficSplit, assignment.traffic_split);
+        && experiment.trafficSplit == assignment.traffic_split;
 }
 
 bool Context::audience_matches(const ExperimentData& experiment, Assignment& assignment) {
@@ -874,8 +800,6 @@ bool Context::audience_matches(const ExperimentData& experiment, Assignment& ass
     if (!audience_str.empty()) {
         if (attrs_seq_ > assignment.attrs_seq) {
             auto result = audience_matcher_.evaluate(audience_str, get_attributes_map());
-            // An indeterminate result keeps the cached flag, so it alone never
-            // invalidates the assignment.
             bool new_audience_mismatch = result.has_value() ? !result.value() : assignment.audience_mismatch;
 
             if (new_audience_mismatch != assignment.audience_mismatch) {

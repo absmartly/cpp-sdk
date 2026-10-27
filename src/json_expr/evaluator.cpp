@@ -1,4 +1,5 @@
 #include "absmartly/json_expr/evaluator.h"
+#include "../number_format.h"
 
 #include <cmath>
 #include <charconv>
@@ -27,22 +28,16 @@ Evaluator::Evaluator() {
 
 nlohmann::json Evaluator::evaluate(const nlohmann::json& expr, const nlohmann::json& vars) const {
     if (expr.is_array()) {
-        auto it = operators_.find("and");
-        if (it != operators_.end()) {
-            return it->second->evaluate(*this, expr, vars);
-        }
-        return nullptr;
+        return operators_.at("and")->evaluate(*this, expr, vars);
     }
 
-    if (expr.is_object()) {
-        for (auto it = expr.begin(); it != expr.end(); ++it) {
-            auto op_it = operators_.find(it.key());
-            if (op_it != operators_.end()) {
-                return op_it->second->evaluate(*this, it.value(), vars);
-            }
-            break;
+    if (expr.is_object() && !expr.empty()) {
+        // Expressions use one operator key; JSON objects iterate alphabetically.
+        auto it = expr.begin();
+        auto op_it = operators_.find(it.key());
+        if (op_it != operators_.end()) {
+            return op_it->second->evaluate(*this, it.value(), vars);
         }
-        return nullptr;
     }
 
     return nullptr;
@@ -112,30 +107,22 @@ std::optional<std::string> Evaluator::to_string_value(const nlohmann::json& valu
     if (value.is_number()) {
         // JS: x.toFixed(15).replace(/\.?0{0,15}$/, "")
         double d = value.get<double>();
-        if (!std::isfinite(d) || std::abs(d) >= 1e21) {
-            // JS falls back to the shortest round-trip form, e.g. "1e+23".
-            std::string out;
-            for (int precision = 1; precision <= 17; ++precision) {
-                std::ostringstream oss;
-                oss.imbue(std::locale::classic());
-                oss << std::setprecision(precision) << d;
-                out = oss.str();
-                // strtod, not stod: a short candidate can round past DBL_MAX.
-                if (!std::isfinite(d) || std::strtod(out.c_str(), nullptr) == d) {
-                    break;
-                }
-            }
-            return out;
+        if (!std::isfinite(d)) {
+            std::ostringstream oss;
+            oss.imbue(std::locale::classic());
+            oss << d;
+            return oss.str();
+        }
+        if (std::abs(d) >= 1e21) {
+            return detail::large_number_to_string(d);
         }
         std::ostringstream oss;
         oss.imbue(std::locale::classic());
         oss << std::fixed << std::setprecision(15) << d;
         std::string result = oss.str();
         size_t end = result.size();
-        size_t zeros = 0;
-        while (zeros < 15 && end > 0 && result[end - 1] == '0') {
+        while (end > 0 && result[end - 1] == '0') {
             --end;
-            ++zeros;
         }
         if (end > 0 && result[end - 1] == '.') {
             --end;
@@ -197,19 +184,14 @@ std::optional<int> Evaluator::compare(const nlohmann::json& a, const nlohmann::j
 }
 
 nlohmann::json Evaluator::extract_var(const nlohmann::json& vars, const std::string& path) {
-    std::vector<std::string> fragments;
     std::istringstream stream(path);
-    std::string fragment;
-    while (std::getline(stream, fragment, '/')) {
-        fragments.push_back(fragment);
-    }
-
+    std::string frag;
     const nlohmann::json* current = vars.is_null() ? nullptr : &vars;
     if (!current) {
         return nullptr;
     }
 
-    for (const auto& frag : fragments) {
+    while (std::getline(stream, frag, '/')) {
         if (current->is_object()) {
             auto it = current->find(frag);
             if (it != current->end()) {

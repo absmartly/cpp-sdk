@@ -1,6 +1,7 @@
 FetchContent_Declare(
   Catch2
   URL https://github.com/catchorg/Catch2/archive/refs/tags/v3.5.2.tar.gz
+  URL_HASH SHA256=269543a49eb76f40b3f93ff231d4c24c27a7e16c90e47d2e45bcc564de470c6e
 )
 FetchContent_MakeAvailable(Catch2)
 

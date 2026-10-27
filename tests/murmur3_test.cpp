@@ -6,10 +6,6 @@
 
 using namespace absmartly;
 
-static std::vector<uint8_t> utf8_bytes(const std::string& str) {
-    return std::vector<uint8_t>(str.begin(), str.end());
-}
-
 TEST_CASE("murmur3_32 matches known hashes with seed 0", "[murmur3]") {
     struct TestCase {
         std::string input;
@@ -56,7 +52,7 @@ TEST_CASE("murmur3_32 matches known hashes with seed 0", "[murmur3]") {
     };
 
     for (const auto& tc : cases) {
-        auto bytes = utf8_bytes(tc.input);
+        std::vector<uint8_t> bytes(tc.input.begin(), tc.input.end());
         CAPTURE(tc.input, tc.seed);
         REQUIRE(murmur3_32(bytes.data(), bytes.size(), tc.seed) == tc.expected);
     }

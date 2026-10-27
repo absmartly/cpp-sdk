@@ -1,6 +1,7 @@
 #include "absmartly/async_http_client.h"
 
 #include "curl_global.h"
+#include "curl_utils.h"
 
 #include <sstream>
 #include <mutex>
@@ -83,12 +84,11 @@ std::future<HTTPClient::Response> AsyncHTTPClient::put(
 
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
 
-    std::vector<uint8_t> body_copy(body);
     // The "PUT" method override is applied inside enqueue() AFTER the request body
     // is set. Setting CURLOPT_CUSTOMREQUEST before CURLOPT_POSTFIELDS makes libcurl
     // switch to upload (read-callback) mode and fail with CURLE_READ_ERROR.
     return enqueue(easy, build_url_with_query(url, query), build_header_list(headers),
-                   std::move(body_copy), "PUT");
+                   body, "PUT");
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::post(
@@ -107,8 +107,7 @@ std::future<HTTPClient::Response> AsyncHTTPClient::post(
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(easy, CURLOPT_POST, 1L);
 
-    std::vector<uint8_t> body_copy(body);
-    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), std::move(body_copy));
+    return enqueue(easy, build_url_with_query(url, query), build_header_list(headers), body);
 }
 
 std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
@@ -134,7 +133,6 @@ std::future<HTTPClient::Response> AsyncHTTPClient::enqueue(
         curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, static_cast<long>(req->request_body.size()));
     }
 
-    // Apply any custom method (e.g. "PUT") only after the body has been configured.
     if (method_override) {
         curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method_override);
     }
@@ -241,53 +239,15 @@ void AsyncHTTPClient::process_completed() {
 
 std::string AsyncHTTPClient::build_url_with_query(const std::string& url,
                                                    const std::map<std::string, std::string>& query) {
-    if (query.empty()) {
-        return url;
-    }
-
-    std::ostringstream oss;
-    oss << url;
-
-    bool has_query = url.find('?') != std::string::npos;
-    CURL* curl = curl_easy_init();
-    if (curl) {
-        for (const auto& [key, value] : query) {
-            oss << (has_query ? '&' : '?');
-            has_query = true;
-
-            char* encoded_key = curl_easy_escape(curl, key.c_str(), static_cast<int>(key.size()));
-            char* encoded_value = curl_easy_escape(curl, value.c_str(), static_cast<int>(value.size()));
-            if (!encoded_key || !encoded_value) {
-                curl_free(encoded_key);
-                curl_free(encoded_value);
-                curl_easy_cleanup(curl);
-                throw std::runtime_error("Failed to URL-encode query parameter");
-            }
-            oss << encoded_key << '=' << encoded_value;
-            curl_free(encoded_key);
-            curl_free(encoded_value);
-        }
-        curl_easy_cleanup(curl);
-    }
-
-    return oss.str();
+    return detail::build_url_with_query(url, query);
 }
 
 struct curl_slist* AsyncHTTPClient::build_header_list(const std::map<std::string, std::string>& headers) {
-    struct curl_slist* list = nullptr;
-    for (const auto& [key, value] : headers) {
-        std::string header = key + ": " + value;
-        list = curl_slist_append(list, header.c_str());
-    }
-    return list;
+    return detail::build_header_list(headers);
 }
 
 size_t AsyncHTTPClient::write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* body = static_cast<std::vector<uint8_t>*>(userdata);
-    size_t total_size = size * nmemb;
-    body->insert(body->end(), reinterpret_cast<uint8_t*>(ptr),
-                 reinterpret_cast<uint8_t*>(ptr) + total_size);
-    return total_size;
+    return detail::write_callback(ptr, size, nmemb, userdata);
 }
 
 } // namespace absmartly

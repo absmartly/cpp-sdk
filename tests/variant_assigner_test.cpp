@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "absmartly/variant_assigner.h"
 #include "absmartly/hashing.h"
+#include <limits>
 #include <string>
 #include <vector>
 

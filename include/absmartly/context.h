@@ -15,7 +15,6 @@
 #include <string>
 #include <memory>
 #include <optional>
-#include <chrono>
 #include <future>
 
 namespace absmartly {
@@ -40,7 +39,7 @@ struct Assignment {
 };
 
 struct ExperimentIndex {
-    const ExperimentData* data = nullptr;
+    const ExperimentData* data = nullptr; // Non-owning; rebuilt whenever Context::data_ changes.
     std::vector<std::map<std::string, nlohmann::json>> variables;
 };
 
@@ -111,7 +110,6 @@ private:
     Assignment& get_or_create_assignment(const std::string& experiment_name);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
 
-    void init(const ContextData& data);
     void build_index();
 
     bool experiment_matches(const ExperimentData& experiment, const Assignment& assignment) const;
@@ -125,12 +123,11 @@ private:
     void check_ready(bool expect_not_finalized = false);
 
     void emit_event(const std::string& type, const nlohmann::json& data = nlohmann::json());
-    void setup_from_config();
+    void setup_from_config(const ContextConfig& config);
     void store_unit(const std::string& unit_type, const nlohmann::json& uid);
     void become_ready(ContextData data);
     void become_failed(const std::string& error);
 
-    ContextConfig config_;
     ContextData data_;
     bool ready_ = false;
     bool failed_ = false;

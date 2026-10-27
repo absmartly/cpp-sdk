@@ -25,6 +25,8 @@ FetchContent_MakeAvailable(absmartly-sdk)
 target_link_libraries(your_target PRIVATE absmartly-sdk)
 ```
 
+For production builds, replace `main` with a reviewed, fixed commit SHA (or a published release tag) so updates cannot change your build unexpectedly. SDK tests default to off when included as a dependency; a standalone build enables them by default.
+
 ### CMake (Local)
 
 If you have cloned the repository locally, you can add it as a subdirectory:
@@ -402,7 +404,7 @@ If the context has a `ContextPublisher` and it fails (throws, or returns a faile
 
 ### Finalizing
 
-The `finalize()` method will ensure all events have been published, like `publish()`, and will also "seal" the context. After that, `treatment()`, `peek()`, `variable_value()`, `variable_keys()`, the custom field getters, `publish()`, `refresh()`, `track()` and the setters throw a `ContextFinalizedException`.
+The `finalize()` method will ensure all events have been published, like `publish()`, and will also "seal" the context. After that, `treatment()`, `peek()`, `variable_value()`, `peek_variable_value()`, `variable_keys()`, the custom field getters, `publish()`, `refresh()`, `track()` and the unit/attribute setters throw a `ContextFinalizedException`. Overrides and custom assignments remain allowed after finalization; `experiments()` also remains available once ready.
 
 ```cpp
 absmartly::PublishEvent event = context.finalize();

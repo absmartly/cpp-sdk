@@ -794,6 +794,34 @@ TEST_CASE("Context variable keys", "[context]") {
     }
 }
 
+TEST_CASE("Missing optional model fields clear reused values", "[models]") {
+    ExperimentVariant variant{"old", {{"color", "red"}}};
+    from_json(nlohmann::json{{"name", "new"}}, variant);
+    REQUIRE(variant.config.is_null());
+
+    GoalAchievement goal{"old", 1, {{"amount", 10}}};
+    from_json(nlohmann::json{{"name", "new"}, {"achievedAt", 2}}, goal);
+    REQUIRE(goal.properties.is_null());
+
+    Attribute attribute{"old", "stale", 1};
+    from_json(nlohmann::json{{"name", "new"}, {"setAt", 2}}, attribute);
+    REQUIRE(attribute.value.is_null());
+}
+
+TEST_CASE("Malformed variant config emits a diagnostic and keeps defaults", "[context]") {
+    auto data = make_test_data();
+    data.experiments[0].variants[0].config = "{";
+    auto handler = std::make_shared<MockEventHandler>();
+    Context ctx(make_test_config(), data, handler);
+    REQUIRE(ctx.is_ready());
+    REQUIRE_FALSE(ctx.is_failed());
+    REQUIRE(handler->count_events("error") == 1);
+    REQUIRE(handler->events[0].data["message"] ==
+            "Failed to parse variant config for " + data.experiments[0].name);
+    REQUIRE(handler->events[0].data["error"].is_string());
+    REQUIRE(handler->events[0].data["variant"] == 0);
+}
+
 TEST_CASE("Context overrides", "[context]") {
     auto data = make_test_data();
     auto config = make_test_config();
@@ -853,10 +881,12 @@ TEST_CASE("Context custom assignments", "[context]") {
         REQUIRE(ctx.peek("exp_test_abc") == 4);
     }
 
-    SECTION("should throw after finalize") {
+    SECTION("should allow custom assignments after finalize") {
         Context ctx(config, data);
         ctx.finalize();
-        REQUIRE_THROWS_AS(ctx.set_custom_assignment("exp_test_ab", 1), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.set_custom_assignment("exp_test_ab", 1));
+        REQUIRE_NOTHROW(ctx.set_custom_assignments({{"exp_test_ab", 2}, {"exp_test_abc", 1}}));
+        REQUIRE(ctx.is_finalized());
     }
 }
 
@@ -1109,7 +1139,7 @@ TEST_CASE("Context finalize", "[context]") {
         REQUIRE_THROWS_AS(ctx.track("goal1"), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_attribute("a", 1), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.set_unit("test", "test"), ContextFinalizedException);
-        REQUIRE_THROWS_AS(ctx.set_custom_assignment("exp", 1), ContextFinalizedException);
+        REQUIRE_NOTHROW(ctx.set_custom_assignment("exp", 1));
         REQUIRE_THROWS_AS(ctx.variable_value("key", 0), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.peek_variable_value("key", 0), ContextFinalizedException);
         REQUIRE_THROWS_AS(ctx.variable_keys(), ContextFinalizedException);
@@ -1711,7 +1741,7 @@ TEST_CASE("custom field reads throw before ready", "[context][notready]") {
     REQUIRE_THROWS_AS(ctx.custom_field_keys(), ContextNotReadyException);
 }
 
-TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
+TEST_CASE("Overrides remain allowed after finalize", "[context][fix23]") {
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
@@ -1719,7 +1749,6 @@ TEST_CASE("Fix: set_override throws after finalize", "[context][fix23]") {
     Context ctx(config, data);
     ctx.finalize();
 
-    // Overrides are allowed after finalize (cross-SDK consistency)
     REQUIRE_NOTHROW(ctx.set_override("exp_test_ab", 1));
     REQUIRE_NOTHROW(ctx.set_overrides({{"exp_test_ab", 2}}));
 }
@@ -1777,24 +1806,25 @@ TEST_CASE("Fix: redundant data copy removed in init", "[context][fix9]") {
     REQUIRE(ctx.treatment("exp_test_ab") >= 0);
 }
 
+class RecordingPublisher : public ContextPublisher {
+public:
+    int call_count = 0;
+    PublishEvent last_event;
+    std::future<void> publish(const PublishEvent& event) override {
+        call_count++;
+        last_event = event;
+        std::promise<void> p;
+        p.set_value();
+        return p.get_future();
+    }
+};
+
 TEST_CASE("Fix: publish calls event_publisher", "[context][fix36]") {
-    class MockPublisher : public ContextPublisher {
-    public:
-        int call_count = 0;
-        PublishEvent last_event;
-        std::future<void> publish(const PublishEvent& event) override {
-            call_count++;
-            last_event = event;
-            std::promise<void> p;
-            p.set_value();
-            return p.get_future();
-        }
-    };
 
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
-    auto publisher = std::make_shared<MockPublisher>();
+    auto publisher = std::make_shared<RecordingPublisher>();
 
     Context ctx(config, data, nullptr, publisher);
     ctx.treatment("exp_test_ab");
@@ -1805,22 +1835,11 @@ TEST_CASE("Fix: publish calls event_publisher", "[context][fix36]") {
 }
 
 TEST_CASE("Fix: finalize calls event_publisher", "[context][fix36]") {
-    class MockPublisher : public ContextPublisher {
-    public:
-        int call_count = 0;
-        std::future<void> publish(const PublishEvent& event) override {
-            (void)event;
-            call_count++;
-            std::promise<void> p;
-            p.set_value();
-            return p.get_future();
-        }
-    };
 
     ContextConfig config;
     config.units = {{"session_id", "abc123"}};
     ContextData data = make_test_data();
-    auto publisher = std::make_shared<MockPublisher>();
+    auto publisher = std::make_shared<RecordingPublisher>();
 
     Context ctx(config, data, nullptr, publisher);
     ctx.track("goal1", {{"amount", 100}});
@@ -2207,7 +2226,6 @@ TEST_CASE("Publish retry after failure delivers the original events", "[context]
     REQUIRE(failed.exposures.size() == 1);
     REQUIRE(failed.goals.size() == 1);
 
-    // Events queued after the failure go after the requeued ones.
     ctx.track("goal2");
     REQUIRE(ctx.pending() == 3);
 
@@ -2229,7 +2247,6 @@ TEST_CASE("Publish retry after failure delivers the original events", "[context]
     REQUIRE(event.goals[0].properties == failed.goals[0].properties);
     REQUIRE(event.goals[1].name == "goal2");
 
-    // The successfully published batch is gone; nothing is sent twice.
     REQUIRE(ctx.publish().units.empty());
     REQUIRE(publisher->received.size() == 2);
 }
@@ -2428,7 +2445,6 @@ TEST_CASE("Reads throw before the context is ready", "[context][notready]") {
     REQUIRE_NOTHROW(ctx.track("goal1"));
     REQUIRE_NOTHROW(ctx.set_attribute("a", 1));
 
-    // A completed load is picked up by the read itself.
     promise.set_value(make_test_data());
     REQUIRE(ctx.treatment("exp_test_ab") == 1);
 }
@@ -2493,7 +2509,6 @@ TEST_CASE("A late unit does not change a cached unassigned treatment", "[context
     REQUIRE(ctx.treatment("exp_test_ab") == 0);
     REQUIRE(ctx.publish().exposures.at(0).assigned == false);
 
-    // An experiment first evaluated after the unit is set is assigned.
     REQUIRE(ctx.treatment("exp_test_abc") == 2);
 }
 
@@ -2609,7 +2624,6 @@ TEST_CASE("A throwing event logger does not fail the context", "[context][logger
 
 namespace {
 
-// Calls finalize() on the context from inside publish, then fails.
 class ReentrantFinalizePublisher : public ContextPublisher {
 public:
     std::future<void> publish(const PublishEvent& event) override {

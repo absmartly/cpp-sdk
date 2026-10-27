@@ -5,6 +5,22 @@
 
 namespace absmartly {
 
+namespace {
+
+template <typename Predicate>
+nlohmann::json compare_op(const Evaluator& evaluator, const nlohmann::json& args,
+                          const nlohmann::json& vars, Predicate predicate) {
+    if (!args.is_array()) return nullptr;
+    auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
+    if (lhs.is_null()) return nullptr;
+    auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
+    if (rhs.is_null()) return nullptr;
+    auto result = Evaluator::compare(lhs, rhs);
+    return result.has_value() ? nlohmann::json(predicate(*result)) : nlohmann::json(nullptr);
+}
+
+} // namespace
+
 nlohmann::json ValueOperator::evaluate(
     const Evaluator& /*evaluator*/,
     const nlohmann::json& args,
@@ -93,22 +109,7 @@ nlohmann::json EqOperator::evaluate(
     const nlohmann::json& args,
     const nlohmann::json& vars
 ) const {
-    if (!args.is_array()) {
-        return nullptr;
-    }
-    auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
-    if (lhs.is_null()) {
-        return nullptr;
-    }
-    auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
-    if (rhs.is_null()) {
-        return nullptr;
-    }
-    auto result = Evaluator::compare(lhs, rhs);
-    if (result.has_value()) {
-        return *result == 0;
-    }
-    return nullptr;
+    return compare_op(evaluator, args, vars, [](int result) { return result == 0; });
 }
 
 nlohmann::json GtOperator::evaluate(
@@ -116,22 +117,7 @@ nlohmann::json GtOperator::evaluate(
     const nlohmann::json& args,
     const nlohmann::json& vars
 ) const {
-    if (!args.is_array()) {
-        return nullptr;
-    }
-    auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
-    if (lhs.is_null()) {
-        return nullptr;
-    }
-    auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
-    if (rhs.is_null()) {
-        return nullptr;
-    }
-    auto result = Evaluator::compare(lhs, rhs);
-    if (result.has_value()) {
-        return *result > 0;
-    }
-    return nullptr;
+    return compare_op(evaluator, args, vars, [](int result) { return result > 0; });
 }
 
 nlohmann::json GteOperator::evaluate(
@@ -139,22 +125,7 @@ nlohmann::json GteOperator::evaluate(
     const nlohmann::json& args,
     const nlohmann::json& vars
 ) const {
-    if (!args.is_array()) {
-        return nullptr;
-    }
-    auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
-    if (lhs.is_null()) {
-        return nullptr;
-    }
-    auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
-    if (rhs.is_null()) {
-        return nullptr;
-    }
-    auto result = Evaluator::compare(lhs, rhs);
-    if (result.has_value()) {
-        return *result >= 0;
-    }
-    return nullptr;
+    return compare_op(evaluator, args, vars, [](int result) { return result >= 0; });
 }
 
 nlohmann::json LtOperator::evaluate(
@@ -162,22 +133,7 @@ nlohmann::json LtOperator::evaluate(
     const nlohmann::json& args,
     const nlohmann::json& vars
 ) const {
-    if (!args.is_array()) {
-        return nullptr;
-    }
-    auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
-    if (lhs.is_null()) {
-        return nullptr;
-    }
-    auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
-    if (rhs.is_null()) {
-        return nullptr;
-    }
-    auto result = Evaluator::compare(lhs, rhs);
-    if (result.has_value()) {
-        return *result < 0;
-    }
-    return nullptr;
+    return compare_op(evaluator, args, vars, [](int result) { return result < 0; });
 }
 
 nlohmann::json LteOperator::evaluate(
@@ -185,22 +141,7 @@ nlohmann::json LteOperator::evaluate(
     const nlohmann::json& args,
     const nlohmann::json& vars
 ) const {
-    if (!args.is_array()) {
-        return nullptr;
-    }
-    auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
-    if (lhs.is_null()) {
-        return nullptr;
-    }
-    auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
-    if (rhs.is_null()) {
-        return nullptr;
-    }
-    auto result = Evaluator::compare(lhs, rhs);
-    if (result.has_value()) {
-        return *result <= 0;
-    }
-    return nullptr;
+    return compare_op(evaluator, args, vars, [](int result) { return result <= 0; });
 }
 
 nlohmann::json InOperator::evaluate(
