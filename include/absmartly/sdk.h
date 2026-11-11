@@ -29,6 +29,8 @@ public:
 private:
     explicit SDK(SDKConfig config);
 
+    ContextConfig with_client_system_attributes(const ContextConfig& config) const;
+
     std::shared_ptr<Client> client_;
     std::shared_ptr<ContextDataProvider> context_data_provider_;
     std::shared_ptr<ContextEventLogger> context_event_handler_;

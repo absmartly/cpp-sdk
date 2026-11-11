@@ -139,6 +139,11 @@ private:
     std::map<std::string, nlohmann::json> units_;
     std::vector<Attribute> attrs_;
     int attrs_seq_ = 0;
+    // System attribute names from the client config; injected under the "application"
+    // and "environment" keys when the audience evaluation map is built. Empty means
+    // the key is omitted. User-set attributes override them.
+    std::string application_;
+    std::string environment_;
 
     std::map<std::string, Assignment> assignments_;
 
