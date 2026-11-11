@@ -818,9 +818,10 @@ nlohmann::json Context::get_attributes_map() const {
     // System attributes (application/environment from the client config) go in
     // first; user-set attributes overlay them, so a value the user sets under the
     // same name always wins, even one set after an assignment was cached (the
-    // attrs_seq bump invalidates the cached audience result). Empty names are
-    // skipped so a filter on an unconfigured key simply does not match, rather than
-    // matching null/"". app_version is intentionally not injected.
+    // attrs_seq bump invalidates the cached audience result). An empty name is
+    // omitted rather than set to null/"", so the key is simply absent and the
+    // filter decides the result (an eq equality filter, for example, does not
+    // match an absent key). app_version is intentionally not injected.
     if (!application_.empty()) {
         attrs["application"] = application_;
     }
