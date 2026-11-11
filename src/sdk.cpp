@@ -55,16 +55,33 @@ std::shared_ptr<SDK> SDK::create_simple(ClientConfig client_config,
 }
 
 std::unique_ptr<Context> SDK::create_context(const ContextConfig& config) {
+    ContextConfig cfg = with_client_system_attributes(config);
     auto data_future = context_data_provider_->get_context_data();
-    return std::make_unique<Context>(config, std::move(data_future),
+    return std::make_unique<Context>(cfg, std::move(data_future),
                                      context_event_handler_, context_event_publisher_,
                                      context_data_provider_);
 }
 
 std::unique_ptr<Context> SDK::create_context_with(const ContextConfig& config, ContextData data) {
-    return std::make_unique<Context>(config, std::move(data),
+    ContextConfig cfg = with_client_system_attributes(config);
+    return std::make_unique<Context>(cfg, std::move(data),
                                      context_event_handler_, context_event_publisher_,
                                      context_data_provider_);
+}
+
+ContextConfig SDK::with_client_system_attributes(const ContextConfig& config) const {
+    ContextConfig cfg = config;
+    // Default the system attribute names from the client config; an explicit value
+    // on the passed config wins, so callers can still override them.
+    if (client_) {
+        if (cfg.application.empty()) {
+            cfg.application = client_->application();
+        }
+        if (cfg.environment.empty()) {
+            cfg.environment = client_->environment();
+        }
+    }
+    return cfg;
 }
 
 std::future<ContextData> SDK::get_context_data() {

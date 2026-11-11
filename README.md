@@ -346,6 +346,37 @@ context.set_attributes({
 });
 ```
 
+#### System Attributes (`application` / `environment`)
+
+Audiences and assignment-rule conditions are always evaluated with the
+`application` and `environment` names from your client configuration. The SDK
+injects them into the attribute map it evaluates audiences against, so a filter
+such as `{"filter":[{"eq":[{"var":"environment"},{"value":"production"}]}]}`
+matches without you setting anything. This is always on; the collector already
+attaches both server-side, so nothing extra is added to the publish payload.
+
+System values go in first and your own attributes overlay them, so a value you
+set under the same name always wins, even one set after the context was created
+(it re-evaluates cached assignments). An empty `application` or `environment`
+name is omitted rather than set to `null`/`""`: the key is simply absent from
+the evaluation map, so the result is whatever the filter yields for a missing
+value (an `eq` equality filter, for example, does not match). `app_version` is
+not injected.
+
+When you create a context through `SDK::create_context()` /
+`create_context_with()`, these names are taken from the `ClientConfig`. When you
+construct a `Context` directly, set them on the `ContextConfig`:
+
+```cpp
+absmartly::ContextConfig config;
+config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
+config.application = "website";
+config.environment = "production";
+
+absmartly::Context context(config, data);
+```
+
+
 ### Custom Assignments
 
 ```cpp

@@ -49,6 +49,8 @@ void Context::setup_from_config(const ContextConfig& config) {
     }
     overrides_ = config.overrides;
     cassignments_ = config.custom_assignments;
+    application_ = config.application;
+    environment_ = config.environment;
 }
 
 void Context::become_ready(ContextData data) {
@@ -813,6 +815,19 @@ bool Context::audience_matches(const ExperimentData& experiment, Assignment& ass
 
 nlohmann::json Context::get_attributes_map() const {
     nlohmann::json attrs = nlohmann::json::object();
+    // System attributes (application/environment from the client config) go in
+    // first; user-set attributes overlay them, so a value the user sets under the
+    // same name always wins, even one set after an assignment was cached (the
+    // attrs_seq bump invalidates the cached audience result). An empty name is
+    // omitted rather than set to null/"", so the key is simply absent and the
+    // filter decides the result (an eq equality filter, for example, does not
+    // match an absent key). app_version is intentionally not injected.
+    if (!application_.empty()) {
+        attrs["application"] = application_;
+    }
+    if (!environment_.empty()) {
+        attrs["environment"] = environment_;
+    }
     for (const auto& attr : attrs_) {
         attrs[attr.name] = attr.value;
     }

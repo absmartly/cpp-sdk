@@ -33,6 +33,9 @@ Client::Client(const ClientConfig& config, std::shared_ptr<HTTPClient> http_clie
     // (404) against a versioned endpoint.
     url_ = config.endpoint + "/context";
 
+    application_ = config.application;
+    environment_ = config.environment;
+
     headers_["X-API-Key"] = config.api_key;
     headers_["X-Application"] = config.application;
     headers_["X-Environment"] = config.environment;
