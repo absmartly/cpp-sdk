@@ -207,4 +207,109 @@ TEST_CASE("System attributes: app_version is not injected", "[system-attributes]
     REQUIRE(event.exposures[0].audienceMismatch == true);
 }
 
-// A never-called HTTP client; the data provider below bypasses the network.
+// A never-called HTTP client; the data provider below bypasses the network, so
+// no request is ever made. Only present to satisfy the Client constructor.
+class UnusedHTTPClient : public HTTPClient {
+public:
+    std::future<Response> get(const std::string&,
+                              const std::map<std::string, std::string>&,
+                              const std::map<std::string, std::string>&) override {
+        std::promise<Response> p;
+        p.set_value(Response{});
+        return p.get_future();
+    }
+    std::future<Response> put(const std::string&,
+                              const std::map<std::string, std::string>&,
+                              const std::map<std::string, std::string>&,
+                              const std::vector<uint8_t>&) override {
+        std::promise<Response> p;
+        p.set_value(Response{});
+        return p.get_future();
+    }
+    std::future<Response> post(const std::string&,
+                               const std::map<std::string, std::string>&,
+                               const std::map<std::string, std::string>&,
+                               const std::vector<uint8_t>&) override {
+        std::promise<Response> p;
+        p.set_value(Response{});
+        return p.get_future();
+    }
+};
+
+class SystemAttrDataProvider : public ContextDataProvider {
+public:
+    explicit SystemAttrDataProvider(ContextData data) : data_(std::move(data)) {}
+    std::future<ContextData> get_context_data() override {
+        std::promise<ContextData> promise;
+        promise.set_value(data_);
+        return promise.get_future();
+    }
+private:
+    ContextData data_;
+};
+
+static std::shared_ptr<SDK> make_sdk(ContextData data,
+                                     const std::string& application,
+                                     const std::string& environment) {
+    ClientConfig client_config;
+    client_config.endpoint = "http://localhost/v1";
+    client_config.api_key = "test-key";
+    client_config.application = application;
+    client_config.environment = environment;
+
+    auto client = std::make_shared<Client>(client_config, std::make_shared<UnusedHTTPClient>());
+
+    SDKConfig sdk_config;
+    sdk_config.client = client;
+    sdk_config.context_data_provider = std::make_shared<SystemAttrDataProvider>(std::move(data));
+    return SDK::create(std::move(sdk_config));
+}
+
+TEST_CASE("System attributes: create_context_with inherits the client application/environment",
+          "[system-attributes][sdk]") {
+    auto data = make_system_audience_data(
+        R"({"filter":[{"eq":[{"var":"environment"},{"value":"production"}]}]})");
+    auto sdk = make_sdk(data, "website", "production");
+
+    ContextConfig ctx_config;
+    ctx_config.units = {{"session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}};
+
+    auto ctx = sdk->create_context_with(ctx_config, data);
+    ctx->wait_until_ready();
+
+    // environment=production comes from the client config; the production filter
+    // matches without the caller setting any attribute.
+    REQUIRE(ctx->treatment("exp_system") == 1);
+}
+
+TEST_CASE("System attributes: create_context inherits the client application/environment",
+          "[system-attributes][sdk]") {
+    auto data = make_system_audience_data(
+        R"({"filter":[{"eq":[{"var":"application"},{"value":"website"}]}]})");
+    auto sdk = make_sdk(data, "website", "production");
+
+    ContextConfig ctx_config;
+    ctx_config.units = {{"session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}};
+
+    auto ctx = sdk->create_context(ctx_config);
+    ctx->wait_until_ready();
+
+    REQUIRE(ctx->treatment("exp_system") == 1);
+}
+
+TEST_CASE("System attributes: explicit ContextConfig values override the client config",
+          "[system-attributes][sdk]") {
+    auto data = make_system_audience_data(
+        R"({"filter":[{"eq":[{"var":"environment"},{"value":"staging"}]}]})");
+    auto sdk = make_sdk(data, "website", "production");
+
+    ContextConfig ctx_config;
+    ctx_config.units = {{"session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}};
+    // Explicit value on the config wins over the client's production environment.
+    ctx_config.environment = "staging";
+
+    auto ctx = sdk->create_context_with(ctx_config, data);
+    ctx->wait_until_ready();
+
+    REQUIRE(ctx->treatment("exp_system") == 1);
+}

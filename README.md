@@ -358,8 +358,10 @@ attaches both server-side, so nothing extra is added to the publish payload.
 System values go in first and your own attributes overlay them, so a value you
 set under the same name always wins, even one set after the context was created
 (it re-evaluates cached assignments). An empty `application` or `environment`
-name is omitted rather than set to `null`/`""`, so a filter on an unconfigured
-key simply does not match. `app_version` is not injected.
+name is omitted rather than set to `null`/`""`: the key is simply absent from
+the evaluation map, so the result is whatever the filter yields for a missing
+value (an `eq` equality filter, for example, does not match). `app_version` is
+not injected.
 
 When you create a context through `SDK::create_context()` /
 `create_context_with()`, these names are taken from the `ClientConfig`. When you
