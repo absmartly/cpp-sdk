@@ -277,8 +277,6 @@ TEST_CASE("System attributes: create_context_with inherits the client applicatio
     auto ctx = sdk->create_context_with(ctx_config, data);
     ctx->wait_until_ready();
 
-    // environment=production comes from the client config; the production filter
-    // matches without the caller setting any attribute.
     REQUIRE(ctx->treatment("exp_system") == 1);
 }
 
@@ -305,7 +303,6 @@ TEST_CASE("System attributes: explicit ContextConfig values override the client 
 
     ContextConfig ctx_config;
     ctx_config.units = {{"session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}};
-    // Explicit value on the config wins over the client's production environment.
     ctx_config.environment = "staging";
 
     auto ctx = sdk->create_context_with(ctx_config, data);
