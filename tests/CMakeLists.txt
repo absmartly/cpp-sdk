@@ -15,6 +15,7 @@ add_executable(absmartly_tests
   audience_matcher_test.cpp
   context_test.cpp
   system_attributes_test.cpp
+  assignment_rules_test.cpp
   http_integration_test.cpp
 )
 

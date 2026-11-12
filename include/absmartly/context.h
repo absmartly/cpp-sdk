@@ -31,6 +31,16 @@ struct Assignment {
     bool full_on = false;
     bool custom = false;
     bool audience_mismatch = false;
+    // A matching assignment rule chose the variant. It wins over the audience,
+    // traffic, full-on and custom assignments; only an override beats it.
+    bool rule_override = false;
+    // A split rule matched while the experiment's unit was missing, giving the
+    // full-on variant (0 when not full-on). Setting the unit re-resolves it while
+    // it is still unexposed.
+    bool rule_missing_unit = false;
+    // The assignmentRules string this assignment was resolved against; a change
+    // (a refresh) re-resolves the rules. The environment is fixed per context.
+    std::string rule_key;
     bool exposed = false;
     std::vector<double> traffic_split;
     std::map<std::string, nlohmann::json> variables;
@@ -41,6 +51,13 @@ struct Assignment {
 struct ExperimentIndex {
     const ExperimentData* data = nullptr; // Non-owning; rebuilt whenever Context::data_ changes.
     std::vector<std::map<std::string, nlohmann::json>> variables;
+    // data->assignmentRules parsed once; null when there are none or they are invalid.
+    nlohmann::json assignment_rules;
+};
+
+struct RuleResolution {
+    int variant = 0;
+    bool missing_unit = false;
 };
 
 class Context {
@@ -114,6 +131,9 @@ private:
 
     bool experiment_matches(const ExperimentData& experiment, const Assignment& assignment) const;
     bool audience_matches(const ExperimentData& experiment, Assignment& assignment);
+    bool rule_matches(const ExperimentIndex& experiment, Assignment& assignment);
+    std::optional<RuleResolution> resolve_rule(const ExperimentIndex& experiment, bool unit_pinned_missing);
+    void invalidate_assignments_pinned_with_missing_unit(const std::string& unit_type);
     nlohmann::json get_attributes_map() const;
     std::string unit_hash(const std::string& unit_type);
 
