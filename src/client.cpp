@@ -1,4 +1,5 @@
 #include "absmartly/client.h"
+#include "absmartly/sdk_version.h"
 
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -40,7 +41,7 @@ Client::Client(const ClientConfig& config, std::shared_ptr<HTTPClient> http_clie
     headers_["X-Application"] = config.application;
     headers_["X-Environment"] = config.environment;
     headers_["X-Application-Version"] = "0";
-    headers_["X-Agent"] = "absmartly-cpp-sdk";
+    headers_["X-Agent"] = SDK_AGENT;
     headers_["Content-Type"] = "application/json";
 
     query_["application"] = config.application;

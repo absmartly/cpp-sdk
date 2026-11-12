@@ -30,8 +30,16 @@ add_library(absmartly-sdk
 
 add_library(absmartly::sdk ALIAS absmartly-sdk)
 
+set(ABSMARTLY_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdk_version.h.in
+  ${ABSMARTLY_GENERATED_INCLUDE_DIR}/absmartly/sdk_version.h
+  @ONLY
+)
+
 target_include_directories(absmartly-sdk PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${ABSMARTLY_GENERATED_INCLUDE_DIR}>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
@@ -72,6 +80,7 @@ install(TARGETS absmartly-sdk absmartly-sdk-json
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY ${ABSMARTLY_GENERATED_INCLUDE_DIR}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY ${json_SOURCE_DIR}/include/nlohmann DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 set(ABSMARTLY_CMAKE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/absmartly-sdk)

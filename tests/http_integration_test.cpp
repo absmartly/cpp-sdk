@@ -22,6 +22,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <absmartly/sdk.h>
+#include <absmartly/sdk_version.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -219,6 +220,7 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     REQUIRE(get.path.substr(0, get.path.find('?')) == "/context");
     REQUIRE(get.path.find("application=www") != std::string::npos);
     REQUIRE(get.path.find("environment=test") != std::string::npos);
+    REQUIRE(get.headers.at("x-agent") == std::string("absmartly-cpp-sdk/") + absmartly::SDK_VERSION);
 
     const auto& put = requests[1];
     REQUIRE(put.method == "PUT");
@@ -229,8 +231,7 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     REQUIRE(put.headers.at("x-application") == "www");
     REQUIRE(put.headers.at("x-environment") == "test");
     REQUIRE(put.headers.at("x-application-version") == "0");
-    REQUIRE(put.headers.count("x-agent") == 1);
-    REQUIRE_FALSE(put.headers.at("x-agent").empty()); // value varies per SDK
+    REQUIRE(put.headers.at("x-agent") == std::string("absmartly-cpp-sdk/") + absmartly::SDK_VERSION);
     REQUIRE(put.headers.at("content-type").find("application/json") != std::string::npos);
 
     auto body = nlohmann::json::parse(put.body);
