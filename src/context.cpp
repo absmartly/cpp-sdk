@@ -773,15 +773,20 @@ void Context::build_index() {
         ExperimentIndex entry;
         entry.data = &exp;
 
+        // As in the Java SDK: a value that is not a JSON object is reported and ignored,
+        // while an object without a "rules" array just means no rules (no error).
         if (!exp.assignmentRules.empty()) {
             try {
-                entry.assignment_rules = nlohmann::json::parse(exp.assignmentRules);
+                auto rules = nlohmann::json::parse(exp.assignmentRules);
+                if (rules.is_object()) {
+                    entry.assignment_rules = std::move(rules);
+                } else {
+                    emit_event("error", {{"message", "Invalid assignmentRules for " + exp.name},
+                                         {"error", "expected a JSON object"}});
+                }
             } catch (const nlohmann::json::exception& e) {
                 emit_event("error", {{"message", "Failed to parse assignmentRules for " + exp.name},
                                      {"error", e.what()}});
-            }
-            if (!entry.assignment_rules.is_object()) {
-                entry.assignment_rules = nullptr;
             }
         }
 

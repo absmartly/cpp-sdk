@@ -60,14 +60,22 @@ jobs:
       - name: Package
         run: cmake --build build --target package
 
-      - name: Check package with a find_package consumer
+      - name: Check packages with a find_package consumer
         run: |
-          mkdir -p "$RUNNER_TEMP/pkg"
-          tar xzf build/absmartly-cpp-sdk-*.tar.gz -C "$RUNNER_TEMP/pkg"
-          cmake -S tests/package_consumer -B "$RUNNER_TEMP/consumer" \
-            -DCMAKE_PREFIX_PATH="$(echo "$RUNNER_TEMP"/pkg/absmartly-cpp-sdk-*)"
-          cmake --build "$RUNNER_TEMP/consumer"
-          test "$("$RUNNER_TEMP/consumer/consumer")" = "absmartly-cpp-sdk/${{ steps.version.outputs.version }}"
+          for archive in build/absmartly-cpp-sdk-*.tar.gz build/absmartly-cpp-sdk-*.zip; do
+            dir="$RUNNER_TEMP/pkg-$(basename "$archive")"
+            mkdir -p "$dir"
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$dir" ;;
+              *) tar xzf "$archive" -C "$dir" ;;
+            esac
+            cmake -S tests/package_consumer -B "$dir-consumer" \
+              -DCMAKE_PREFIX_PATH="$(echo "$dir"/absmartly-cpp-sdk-*)"
+            cmake --build "$dir-consumer"
+            agent=$("$dir-consumer/consumer")
+            echo "$archive: $agent"
+            test "$agent" = "absmartly-cpp-sdk/${{ steps.version.outputs.version }}"
+          done
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/audience_matcher.h>
 #include <absmartly/context.h>
+#include <absmartly/context_event_logger.h>
 
 #include <algorithm>
 #include <functional>
@@ -91,6 +92,13 @@ static ContextConfig make_config(bool with_session = true, const std::string& en
     return config;
 }
 
+struct ErrorCounter : ContextEventLogger {
+    int errors = 0;
+    void handle_event(Context&, const std::string& type, const json&) override {
+        if (type == "error") ++errors;
+    }
+};
+
 static std::vector<Exposure> exposures_for(const PublishEvent& event, const std::string& name) {
     std::vector<Exposure> result;
     std::copy_if(event.exposures.begin(), event.exposures.end(), std::back_inserter(result),
@@ -170,10 +178,24 @@ TEST_CASE("Assignment rules: assign", "[assignment-rules]") {
         REQUIRE(ctx.treatment("exp_test_abc") == 1);
     }
 
-    SECTION("invalid assignmentRules JSON falls back to normal assignment") {
-        Context ctx(make_config(), make_data(json("{not json")));
-        ctx.set_attribute("country", "US");
-        REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+    SECTION("invalid or non-object assignmentRules fall back to normal assignment with an error event") {
+        for (const char* rules : {"{not json", "[]", "5", "\"rules\""}) {
+            auto logger = std::make_shared<ErrorCounter>();
+            Context ctx(make_config(), make_data(json(rules)), logger);
+            ctx.set_attribute("country", "US");
+            REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+            REQUIRE(logger->errors == 1);
+        }
+    }
+
+    SECTION("an object without a rules array means no rules, without an error event") {
+        for (const char* rules : {"{}", R"({"rules":{}})", R"({"rules":null})"}) {
+            auto logger = std::make_shared<ErrorCounter>();
+            Context ctx(make_config(), make_data(json(rules)), logger);
+            ctx.set_attribute("country", "US");
+            REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+            REQUIRE(logger->errors == 0);
+        }
     }
 
     SECTION("variable values follow the rule's variant") {
