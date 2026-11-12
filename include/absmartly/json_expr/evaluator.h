@@ -22,6 +22,12 @@ public:
     static std::optional<double> to_number(const nlohmann::json& value);
     static std::optional<std::string> to_string_value(const nlohmann::json& value);
     static std::optional<int> compare(const nlohmann::json& a, const nlohmann::json& b);
+    // Semantic version comparison used by the semver_* operators, matching the JS and
+    // Java SDKs: a leading v/V and build metadata are ignored, missing core parts count
+    // as 0, numeric identifiers compare numerically and rank below alphanumeric ones, and
+    // a release ranks above its pre-releases. Null when either side is not convertible to
+    // a string or has an empty version core.
+    static std::optional<int> version_compare(const nlohmann::json& a, const nlohmann::json& b);
     static nlohmann::json extract_var(const nlohmann::json& vars, const std::string& path);
 
 private:
