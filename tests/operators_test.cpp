@@ -88,6 +88,17 @@ TEST_CASE("Evaluator::version_compare", "[operators][semver]") {
         REQUIRE(cmp(true, "true") == 0);
     }
 
+    // Deliberately as permissive as the JS and Java SDKs (an empty pre-release or build
+    // suffix reads as a release; a non-numeric core part compares as alphanumeric), so
+    // every SDK orders the same malformed inputs the same way.
+    SECTION("lenient parsing matches the other SDKs") {
+        REQUIRE(cmp("2.4.1-", "2.4.1") == 0);
+        REQUIRE(cmp("2.4.1+", "2.4.1") == 0);
+        REQUIRE(cmp("1..0", "1.0.0") == 1);
+        REQUIRE(cmp("1.0.0-alpha..1", "1.0.0-alpha.0.1") == 1);
+        REQUIRE(cmp("1.x", "1.0") == 1);
+    }
+
     SECTION("null for null, unconvertible or empty-core inputs") {
         REQUIRE_FALSE(cmp(nullptr, "1.0.0").has_value());
         REQUIRE_FALSE(cmp("1.0.0", nullptr).has_value());

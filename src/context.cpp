@@ -627,6 +627,9 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
             if (experiment_matches(*experiment->data, existing) &&
                 rule_matches(*experiment, existing) &&
                 audience_matches(*experiment->data, existing)) {
+                // Both checks ran against the current attributes; advance the sequence
+                // so later reads skip them until an attribute changes again.
+                existing.attrs_seq = attrs_seq_;
                 return existing;
             }
         }
@@ -898,10 +901,10 @@ bool Context::rule_matches(const ExperimentIndex& experiment, Assignment& assign
 
     // Same outcome. Refresh the bookkeeping so an unexposed split now resolved without
     // its unit (or no longer so) is re-resolved, or kept, correctly on set_unit().
+    // The caller advances attrs_seq once the audience check has also run.
     assignment.rule_key = experiment.data->assignmentRules;
     if (rule.has_value()) {
         assignment.rule_missing_unit = rule->missing_unit;
-        assignment.attrs_seq = attrs_seq_;
     }
     return true;
 }

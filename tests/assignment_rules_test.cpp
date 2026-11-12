@@ -404,6 +404,30 @@ TEST_CASE("Assignment rules: caching", "[assignment-rules]") {
         REQUIRE_FALSE(exposures[0].audienceMismatch);
     }
 
+    SECTION("an unmatched rule without an audience still re-resolves on later attribute changes") {
+        auto no_audience = [](ExperimentData& e) { e.audience = nullptr; };
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1)}), no_audience));
+        ctx.set_attribute("country", "UK");
+        REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+        REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        REQUIRE(exposures_for(ctx.publish(), "exp_test_abc").size() == 2);
+    }
+
+    SECTION("a rule check does not skip a pending audience re-check") {
+        auto audience = [](ExperimentData& e) {
+            e.audienceStrict = true;
+            e.audience = json(R"({"filter":[{"gte":[{"var":"age"},{"value":20}]}]})");
+        };
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1)}), audience));
+        ctx.set_attribute("age", 30);
+        REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+        ctx.set_attribute("age", 10);
+        REQUIRE(ctx.treatment("exp_test_abc") == 0);
+        REQUIRE(exposures_for(ctx.publish(), "exp_test_abc")[1].audienceMismatch);
+    }
+
     SECTION("an out-of-range rule variant that changes to another out-of-range one keeps the cache") {
         auto pt = json::parse(R"({"eq":[{"var":"country"},{"value":"PT"}]})");
         Context ctx(make_config(), make_data(rules_of({assign_rule(5), assign_rule(7, pt)})));
