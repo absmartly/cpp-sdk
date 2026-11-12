@@ -49,6 +49,8 @@ void Context::setup_from_config(const ContextConfig& config) {
     }
     overrides_ = config.overrides;
     cassignments_ = config.custom_assignments;
+    application_ = config.application;
+    environment_ = config.environment;
 }
 
 void Context::become_ready(ContextData data) {
@@ -149,6 +151,22 @@ std::vector<std::string> Context::experiments() {
 void Context::set_unit(const std::string& unit_type, const nlohmann::json& uid) {
     check_not_finalized();
     store_unit(unit_type, uid);
+    invalidate_assignments_pinned_with_missing_unit(unit_type);
+}
+
+void Context::invalidate_assignments_pinned_with_missing_unit(const std::string& unit_type) {
+    // A split rule that matched without its unit gave the full-on variant. With the unit
+    // now set it is re-randomised, but only while unexposed: rebuilding an exposed one
+    // would queue a second, conflicting exposure.
+    for (auto it = assignments_.begin(); it != assignments_.end();) {
+        const auto& assignment = it->second;
+        if (assignment.rule_override && assignment.rule_missing_unit && !assignment.exposed &&
+            assignment.unit_type == unit_type) {
+            it = assignments_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void Context::store_unit(const std::string& unit_type, const nlohmann::json& uid) {
@@ -293,7 +311,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
                 queue_exposure(experiment_name, assignment);
             }
 
-            if ((assignment.assigned || assignment.overridden) &&
+            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
                 assignment.variables.count(key) > 0) {
                 return assignment.variables.at(key);
             }
@@ -315,7 +333,8 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name);
 
-        if (assignment.has_variables && (assignment.assigned || assignment.overridden) &&
+        if (assignment.has_variables &&
+            (assignment.assigned || assignment.overridden || assignment.rule_override) &&
             assignment.variables.count(key) > 0) {
             return assignment.variables.at(key);
         }
@@ -597,12 +616,20 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
                 return existing;
             }
         } else if (experiment == nullptr) {
-            if (!existing.assigned) {
+            // A rule-won assignment is also unassigned, but its experiment is gone.
+            if (!existing.assigned && !existing.rule_override) {
                 return existing;
             }
-        } else if (!has_custom || cassignments_[experiment_name] == existing.variant) {
+        } else if (existing.rule_override || !has_custom || cassignments_[experiment_name] == existing.variant) {
+            // A matching rule wins over a custom assignment, so a custom mismatch is not
+            // staleness for a rule-won assignment; treating it as stale rebuilt the
+            // assignment (and re-queued its exposure) on every call.
             if (experiment_matches(*experiment->data, existing) &&
+                rule_matches(*experiment, existing) &&
                 audience_matches(*experiment->data, existing)) {
+                // Both checks ran against the current attributes; advance the sequence
+                // so later reads skip them until an attribute changes again.
+                existing.attrs_seq = attrs_seq_;
                 return existing;
             }
         }
@@ -623,63 +650,73 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
             const auto& exp_data = *experiment->data;
             const std::string& unit_type = exp_data.unitType;
 
-            if (!exp_data.audience.is_null()) {
-                std::string audience_str;
-                if (exp_data.audience.is_string()) {
-                    audience_str = exp_data.audience.get<std::string>();
-                } else {
-                    audience_str = exp_data.audience.dump();
-                }
-
-                if (!audience_str.empty()) {
-                    auto result = audience_matcher_.evaluate(audience_str, get_attributes_map());
-                    if (result.has_value()) {
-                        assignment.audience_mismatch = !result.value();
+            assignment.rule_key = exp_data.assignmentRules;
+            auto rule = resolve_rule(*experiment, false);
+            if (rule.has_value()) {
+                // The rule's variant wins; the audience is not consulted, so
+                // audienceMismatch stays false. assigned=false/eligible=true.
+                assignment.rule_override = true;
+                assignment.rule_missing_unit = rule->missing_unit;
+                assignment.variant = rule->variant;
+            } else {
+                if (!exp_data.audience.is_null()) {
+                    std::string audience_str;
+                    if (exp_data.audience.is_string()) {
+                        audience_str = exp_data.audience.get<std::string>();
+                    } else {
+                        audience_str = exp_data.audience.dump();
                     }
-                }
-            }
 
-            if (exp_data.audienceStrict && assignment.audience_mismatch) {
-                assignment.variant = 0;
-            } else if (exp_data.fullOnVariant == 0) {
-                if (!unit_type.empty()) {
-                    auto unit_it = units_.find(unit_type);
-                    if (unit_it != units_.end()) {
-                        std::string hashed = unit_hash(unit_type);
-                        if (!hashed.empty()) {
-                            auto assigner_it = assigners_.find(unit_type);
-                            if (assigner_it == assigners_.end()) {
-                                assigner_it = assigners_.emplace(unit_type, VariantAssigner(hashed)).first;
-                            }
-                            auto& assigner = assigner_it->second;
-
-                            bool eligible = assigner.assign(
-                                exp_data.trafficSplit,
-                                exp_data.trafficSeedHi,
-                                exp_data.trafficSeedLo) == 1;
-
-                            assignment.assigned = true;
-                            assignment.eligible = eligible;
-
-                            if (eligible) {
-                                if (has_custom) {
-                                    assignment.variant = cassignments_[experiment_name];
-                                    assignment.custom = true;
-                                } else {
-                                    assignment.variant = assigner.assign(
-                                        exp_data.split, exp_data.seedHi, exp_data.seedLo);
-                                }
-                            } else {
-                                assignment.variant = 0;
-                            }
+                    if (!audience_str.empty()) {
+                        auto result = audience_matcher_.evaluate(audience_str, get_attributes_map());
+                        if (result.has_value()) {
+                            assignment.audience_mismatch = !result.value();
                         }
                     }
                 }
-            } else {
-                assignment.assigned = true;
-                assignment.eligible = true;
-                assignment.variant = exp_data.fullOnVariant;
-                assignment.full_on = true;
+
+                if (exp_data.audienceStrict && assignment.audience_mismatch) {
+                    assignment.variant = 0;
+                } else if (exp_data.fullOnVariant == 0) {
+                    if (!unit_type.empty()) {
+                        auto unit_it = units_.find(unit_type);
+                        if (unit_it != units_.end()) {
+                            std::string hashed = unit_hash(unit_type);
+                            if (!hashed.empty()) {
+                                auto assigner_it = assigners_.find(unit_type);
+                                if (assigner_it == assigners_.end()) {
+                                    assigner_it = assigners_.emplace(unit_type, VariantAssigner(hashed)).first;
+                                }
+                                auto& assigner = assigner_it->second;
+
+                                bool eligible = assigner.assign(
+                                    exp_data.trafficSplit,
+                                    exp_data.trafficSeedHi,
+                                    exp_data.trafficSeedLo) == 1;
+
+                                assignment.assigned = true;
+                                assignment.eligible = eligible;
+
+                                if (eligible) {
+                                    if (has_custom) {
+                                        assignment.variant = cassignments_[experiment_name];
+                                        assignment.custom = true;
+                                    } else {
+                                        assignment.variant = assigner.assign(
+                                            exp_data.split, exp_data.seedHi, exp_data.seedLo);
+                                    }
+                                } else {
+                                    assignment.variant = 0;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    assignment.assigned = true;
+                    assignment.eligible = true;
+                    assignment.variant = exp_data.fullOnVariant;
+                    assignment.full_on = true;
+                }
             }
 
             assignment.unit_type = unit_type;
@@ -715,6 +752,7 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
     exposure.fullOn = assignment.full_on;
     exposure.custom = assignment.custom;
     exposure.audienceMismatch = assignment.audience_mismatch;
+    exposure.ruleOverride = assignment.rule_override;
 
     nlohmann::json exposure_data = exposure;
     if (exposure.unit.empty()) {
@@ -734,6 +772,23 @@ void Context::build_index() {
     for (const auto& exp : data_.experiments) {
         ExperimentIndex entry;
         entry.data = &exp;
+
+        // As in the Java SDK: a value that is not a JSON object is reported and ignored,
+        // while an object without a "rules" array just means no rules (no error).
+        if (!exp.assignmentRules.empty()) {
+            try {
+                auto rules = nlohmann::json::parse(exp.assignmentRules);
+                if (rules.is_object()) {
+                    entry.assignment_rules = std::move(rules);
+                } else {
+                    emit_event("error", {{"message", "Invalid assignmentRules for " + exp.name},
+                                         {"error", "expected a JSON object"}});
+                }
+            } catch (const nlohmann::json::exception& e) {
+                emit_event("error", {{"message", "Failed to parse assignmentRules for " + exp.name},
+                                     {"error", e.what()}});
+            }
+        }
 
         for (size_t i = 0; i < exp.variants.size(); ++i) {
             const auto& variant = exp.variants[i];
@@ -788,7 +843,84 @@ bool Context::experiment_matches(const ExperimentData& experiment, const Assignm
         && experiment.trafficSplit == assignment.traffic_split;
 }
 
+std::optional<RuleResolution> Context::resolve_rule(const ExperimentIndex& experiment, bool unit_pinned_missing) {
+    if (experiment.assignment_rules.is_null()) {
+        return std::nullopt;
+    }
+
+    const auto& data = *experiment.data;
+    auto action = audience_matcher_.evaluate_rules(experiment.assignment_rules, environment_, get_attributes_map());
+    if (!action.has_value()) {
+        return std::nullopt;
+    }
+
+    // Like an out-of-range assign variant, a split without one percentage per variant
+    // stops rule evaluation (first match wins) and normal assignment applies.
+    const size_t variant_count = data.variants.size();
+    if (!action->is_split) {
+        if (action->variant < 0 || static_cast<size_t>(action->variant) >= variant_count) {
+            return std::nullopt;
+        }
+        return RuleResolution{action->variant, false};
+    }
+
+    if (action->split.size() != variant_count) {
+        return std::nullopt;
+    }
+
+    // Without the unit there is nothing to randomise over: the experiment's own no-unit
+    // result applies (the full-on variant, or 0 when it is not full-on).
+    const std::string& unit_type = data.unitType;
+    std::string hashed;
+    if (!unit_type.empty() && !unit_pinned_missing && units_.count(unit_type) > 0) {
+        hashed = unit_hash(unit_type);
+    }
+    if (hashed.empty()) {
+        return RuleResolution{data.fullOnVariant, true};
+    }
+
+    auto assigner_it = assigners_.find(unit_type);
+    if (assigner_it == assigners_.end()) {
+        assigner_it = assigners_.emplace(unit_type, VariantAssigner(hashed)).first;
+    }
+    // The experiment's own seed: a rule whose split equals the experiment's keeps every
+    // unit on the variant it would have had anyway.
+    return RuleResolution{assigner_it->second.assign(action->split, data.seedHi, data.seedLo), false};
+}
+
+bool Context::rule_matches(const ExperimentIndex& experiment, Assignment& assignment) {
+    const bool rules_changed = experiment.data->assignmentRules != assignment.rule_key;
+    if (!rules_changed && attrs_seq_ <= assignment.attrs_seq) {
+        return true;
+    }
+
+    // An exposed split resolved without its unit keeps resolving as if the unit were
+    // still missing, so a unit set afterwards cannot switch the variant the user saw.
+    const bool unit_pinned_missing = assignment.exposed && assignment.rule_missing_unit;
+    auto rule = resolve_rule(experiment, unit_pinned_missing);
+
+    if (rule.has_value() != assignment.rule_override ||
+        (rule.has_value() && rule->variant != assignment.variant)) {
+        return false;
+    }
+
+    // Same outcome. Refresh the bookkeeping so an unexposed split now resolved without
+    // its unit (or no longer so) is re-resolved, or kept, correctly on set_unit().
+    // The caller advances attrs_seq once the audience check has also run.
+    assignment.rule_key = experiment.data->assignmentRules;
+    if (rule.has_value()) {
+        assignment.rule_missing_unit = rule->missing_unit;
+    }
+    return true;
+}
+
 bool Context::audience_matches(const ExperimentData& experiment, Assignment& assignment) {
+    // A rule-won assignment never consulted the audience, so an audience change cannot
+    // make it stale.
+    if (assignment.rule_override) {
+        return true;
+    }
+
     std::string audience_str;
     if (experiment.audience.is_string()) {
         audience_str = experiment.audience.get<std::string>();
@@ -813,6 +945,19 @@ bool Context::audience_matches(const ExperimentData& experiment, Assignment& ass
 
 nlohmann::json Context::get_attributes_map() const {
     nlohmann::json attrs = nlohmann::json::object();
+    // System attributes (application/environment from the client config) go in
+    // first; user-set attributes overlay them, so a value the user sets under the
+    // same name always wins, even one set after an assignment was cached (the
+    // attrs_seq bump invalidates the cached audience result). An empty name is
+    // omitted rather than set to null/"", so the key is simply absent and the
+    // filter decides the result (an eq equality filter, for example, does not
+    // match an absent key). app_version is intentionally not injected.
+    if (!application_.empty()) {
+        attrs["application"] = application_;
+    }
+    if (!environment_.empty()) {
+        attrs["environment"] = environment_;
+    }
     for (const auto& attr : attrs_) {
         attrs[attr.name] = attr.value;
     }

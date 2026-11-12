@@ -14,10 +14,14 @@ add_executable(absmartly_tests
   operators_test.cpp
   audience_matcher_test.cpp
   context_test.cpp
+  system_attributes_test.cpp
+  assignment_rules_test.cpp
   http_integration_test.cpp
 )
 
 target_link_libraries(absmartly_tests PRIVATE absmartly-sdk Catch2::Catch2WithMain)
+# Lets tests check the generated SDK version against the single source of truth.
+target_compile_definitions(absmartly_tests PRIVATE ABSMARTLY_PROJECT_VERSION="${PROJECT_VERSION}")
 
 include(CTest)
 include(Catch)

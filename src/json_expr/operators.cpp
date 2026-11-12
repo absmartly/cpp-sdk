@@ -7,16 +7,28 @@ namespace absmartly {
 
 namespace {
 
-template <typename Predicate>
-nlohmann::json compare_op(const Evaluator& evaluator, const nlohmann::json& args,
-                          const nlohmann::json& vars, Predicate predicate) {
+template <typename Compare, typename Predicate>
+nlohmann::json binary_compare_op(const Evaluator& evaluator, const nlohmann::json& args,
+                                 const nlohmann::json& vars, Compare compare, Predicate predicate) {
     if (!args.is_array()) return nullptr;
     auto lhs = args.size() > 0 ? evaluator.evaluate(args[0], vars) : nlohmann::json(nullptr);
     if (lhs.is_null()) return nullptr;
     auto rhs = args.size() > 1 ? evaluator.evaluate(args[1], vars) : nlohmann::json(nullptr);
     if (rhs.is_null()) return nullptr;
-    auto result = Evaluator::compare(lhs, rhs);
+    auto result = compare(lhs, rhs);
     return result.has_value() ? nlohmann::json(predicate(*result)) : nlohmann::json(nullptr);
+}
+
+template <typename Predicate>
+nlohmann::json compare_op(const Evaluator& evaluator, const nlohmann::json& args,
+                          const nlohmann::json& vars, Predicate predicate) {
+    return binary_compare_op(evaluator, args, vars, Evaluator::compare, predicate);
+}
+
+template <typename Predicate>
+nlohmann::json semver_compare_op(const Evaluator& evaluator, const nlohmann::json& args,
+                                 const nlohmann::json& vars, Predicate predicate) {
+    return binary_compare_op(evaluator, args, vars, Evaluator::version_compare, predicate);
 }
 
 } // namespace
@@ -142,6 +154,31 @@ nlohmann::json LteOperator::evaluate(
     const nlohmann::json& vars
 ) const {
     return compare_op(evaluator, args, vars, [](int result) { return result <= 0; });
+}
+
+nlohmann::json SemverEqOperator::evaluate(
+    const Evaluator& evaluator, const nlohmann::json& args, const nlohmann::json& vars) const {
+    return semver_compare_op(evaluator, args, vars, [](int result) { return result == 0; });
+}
+
+nlohmann::json SemverGtOperator::evaluate(
+    const Evaluator& evaluator, const nlohmann::json& args, const nlohmann::json& vars) const {
+    return semver_compare_op(evaluator, args, vars, [](int result) { return result > 0; });
+}
+
+nlohmann::json SemverGteOperator::evaluate(
+    const Evaluator& evaluator, const nlohmann::json& args, const nlohmann::json& vars) const {
+    return semver_compare_op(evaluator, args, vars, [](int result) { return result >= 0; });
+}
+
+nlohmann::json SemverLtOperator::evaluate(
+    const Evaluator& evaluator, const nlohmann::json& args, const nlohmann::json& vars) const {
+    return semver_compare_op(evaluator, args, vars, [](int result) { return result < 0; });
+}
+
+nlohmann::json SemverLteOperator::evaluate(
+    const Evaluator& evaluator, const nlohmann::json& args, const nlohmann::json& vars) const {
+    return semver_compare_op(evaluator, args, vars, [](int result) { return result <= 0; });
 }
 
 nlohmann::json InOperator::evaluate(

@@ -26,3 +26,22 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: cmake --build build --target package
+
+      - name: Check packages with a find_package consumer
+        run: |
+          for archive in build/absmartly-cpp-sdk-*.tar.gz build/absmartly-cpp-sdk-*.zip; do
+            dir="$RUNNER_TEMP/pkg-$(basename "$archive")"
+            mkdir -p "$dir"
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$dir" ;;
+              *) tar xzf "$archive" -C "$dir" ;;
+            esac
+            cmake -S tests/package_consumer -B "$dir-consumer" \
+              -DCMAKE_PREFIX_PATH="$(echo "$dir"/absmartly-cpp-sdk-*)"
+            cmake --build "$dir-consumer"
+            agent=$("$dir-consumer/consumer")
+            echo "$archive: $agent"
+          done

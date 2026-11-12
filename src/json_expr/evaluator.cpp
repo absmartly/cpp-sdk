@@ -1,6 +1,7 @@
 #include "absmartly/json_expr/evaluator.h"
 #include "../number_format.h"
 
+#include <algorithm>
 #include <cmath>
 #include <charconv>
 #include <locale>
@@ -8,6 +9,62 @@
 #include <iomanip>
 
 namespace absmartly {
+
+namespace {
+
+struct Semver {
+    std::vector<std::string> parts;
+    std::string pre_release;
+};
+
+std::vector<std::string> split_dots(const std::string& value) {
+    std::vector<std::string> result;
+    size_t start = 0;
+    while (true) {
+        const auto end = value.find('.', start);
+        result.push_back(value.substr(start, end == std::string::npos ? end : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return result;
+}
+
+std::optional<Semver> parse_semver(std::string v) {
+    if (!v.empty() && (v.front() == 'v' || v.front() == 'V')) v.erase(0, 1);
+    const auto plus = v.find('+');
+    if (plus != std::string::npos) v.resize(plus);
+    if (v.empty()) return std::nullopt;
+
+    const auto dash = v.find('-');
+    const std::string core = v.substr(0, dash);
+    if (core.empty()) return std::nullopt;
+    return Semver{split_dots(core), dash == std::string::npos ? "" : v.substr(dash + 1)};
+}
+
+bool is_numeric_identifier(const std::string& s) {
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) { return c >= '0' && c <= '9'; });
+}
+
+std::string strip_leading_zeros(const std::string& s) {
+    const auto first = s.find_first_not_of('0');
+    return first == std::string::npos ? "0" : s.substr(first);
+}
+
+int compare_identifiers(const std::string& a, const std::string& b) {
+    const bool a_num = is_numeric_identifier(a);
+    const bool b_num = is_numeric_identifier(b);
+    if (a_num && b_num) {
+        const auto a_norm = strip_leading_zeros(a);
+        const auto b_norm = strip_leading_zeros(b);
+        if (a_norm.size() != b_norm.size()) return a_norm.size() > b_norm.size() ? 1 : -1;
+        return a_norm == b_norm ? 0 : (a_norm > b_norm ? 1 : -1);
+    }
+    if (a_num) return -1;
+    if (b_num) return 1;
+    return a == b ? 0 : (a > b ? 1 : -1);
+}
+
+} // namespace
 
 Evaluator::Evaluator() {
     operators_["value"] = std::make_unique<ValueOperator>();
@@ -24,6 +81,11 @@ Evaluator::Evaluator() {
     operators_["in"] = std::make_unique<InOperator>();
     operators_["contains"] = std::make_unique<InOperator>();
     operators_["match"] = std::make_unique<MatchOperator>();
+    operators_["semver_eq"] = std::make_unique<SemverEqOperator>();
+    operators_["semver_gt"] = std::make_unique<SemverGtOperator>();
+    operators_["semver_gte"] = std::make_unique<SemverGteOperator>();
+    operators_["semver_lt"] = std::make_unique<SemverLtOperator>();
+    operators_["semver_lte"] = std::make_unique<SemverLteOperator>();
 }
 
 nlohmann::json Evaluator::evaluate(const nlohmann::json& expr, const nlohmann::json& vars) const {
@@ -181,6 +243,39 @@ std::optional<int> Evaluator::compare(const nlohmann::json& a, const nlohmann::j
     }
 
     return std::nullopt;
+}
+
+std::optional<int> Evaluator::version_compare(const nlohmann::json& a, const nlohmann::json& b) {
+    const auto a_str = to_string_value(a);
+    const auto b_str = to_string_value(b);
+    if (!a_str.has_value() || !b_str.has_value()) return std::nullopt;
+
+    const auto l = parse_semver(*a_str);
+    const auto r = parse_semver(*b_str);
+    if (!l.has_value() || !r.has_value()) return std::nullopt;
+
+    const size_t max_len = std::max(l->parts.size(), r->parts.size());
+    for (size_t i = 0; i < max_len; ++i) {
+        const std::string l_part = i < l->parts.size() ? l->parts[i] : "0";
+        const std::string r_part = i < r->parts.size() ? r->parts[i] : "0";
+        const int result = compare_identifiers(l_part, r_part);
+        if (result != 0) return result;
+    }
+
+    if (l->pre_release.empty() && r->pre_release.empty()) return 0;
+    if (l->pre_release.empty()) return 1;
+    if (r->pre_release.empty()) return -1;
+
+    const auto l_pre = split_dots(l->pre_release);
+    const auto r_pre = split_dots(r->pre_release);
+    const size_t pre_len = std::max(l_pre.size(), r_pre.size());
+    for (size_t i = 0; i < pre_len; ++i) {
+        if (i >= l_pre.size()) return -1;
+        if (i >= r_pre.size()) return 1;
+        const int result = compare_identifiers(l_pre[i], r_pre[i]);
+        if (result != 0) return result;
+    }
+    return 0;
 }
 
 nlohmann::json Evaluator::extract_var(const nlohmann::json& vars, const std::string& path) {

@@ -51,6 +51,21 @@ cmake -DABSMARTLY_BUILD_TESTS=OFF ..
 cmake --build .
 ```
 
+### Installed Package / Release Archives
+
+Each GitHub release (`v*` tag) attaches `absmartly-cpp-sdk-<version>-Linux.tar.gz`
+and `.zip` archives built by CPack. They contain the static library, the SDK
+headers (plus the bundled nlohmann/json headers) and a CMake package config. You
+can also install from source with `cmake --install build --prefix <prefix>`.
+
+Consume an installed copy with `find_package` (libcurl must be available on the
+system):
+
+```cmake
+find_package(absmartly-sdk 1.0 REQUIRED)
+target_link_libraries(your_target PRIVATE absmartly::absmartly-sdk)
+```
+
 ## Getting Started
 
 Please follow the [installation](#installation) instructions before trying the following code.
@@ -345,6 +360,88 @@ context.set_attributes({
     {"url", "/products/123"}
 });
 ```
+
+#### System Attributes (`application` / `environment`)
+
+Audiences and assignment-rule conditions are always evaluated with the
+`application` and `environment` names from your client configuration. The SDK
+injects them into the attribute map it evaluates audiences against, so a filter
+such as `{"filter":[{"eq":[{"var":"environment"},{"value":"production"}]}]}`
+matches without you setting anything. This is always on; the collector already
+attaches both server-side, so nothing extra is added to the publish payload.
+
+System values go in first and your own attributes overlay them, so a value you
+set under the same name always wins, even one set after the context was created
+(it re-evaluates cached assignments). An empty `application` or `environment`
+name is omitted rather than set to `null`/`""`: the key is simply absent from
+the evaluation map, so the result is whatever the filter yields for a missing
+value (an `eq` equality filter, for example, does not match). `app_version` is
+not injected.
+
+When you create a context through `SDK::create_context()` /
+`create_context_with()`, these names are taken from the `ClientConfig`, unless
+the `ContextConfig` you pass already sets `application` or `environment`: a
+non-empty value there takes precedence, for audiences and for assignment rules
+(including which environment an environment-scoped rule matches). When you
+construct a `Context` directly, set them on the `ContextConfig`:
+
+```cpp
+absmartly::ContextConfig config;
+config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
+config.application = "website";
+config.environment = "production";
+
+absmartly::Context context(config, data);
+```
+
+### Assignment Rules
+
+Experiments can define assignment rules in the Web Console. They are evaluated
+in order, and the first matching rule decides the variant, taking precedence
+over audience targeting (including `audienceStrict`), traffic allocation,
+full-on and custom assignments. `set_override()` still wins over every rule.
+
+- An `assign` rule gives a fixed variant.
+- A `split` rule randomises the unit over its own percentages, e.g. `20/30/50`,
+  hashed with the experiment's seed. While the experiment's unit is missing, a
+  split rule gives the full-on variant (0 for an experiment that is not
+  full-on); once the unit is set the variant is re-randomised, unless it was
+  already exposed.
+
+A rule matches when its conditions evaluate to true against the context
+attributes (including the `application`/`environment` system attributes above)
+and, if it is scoped to environments, the context's environment is one of them.
+A rule without conditions always matches, and an empty environments list means
+every environment. Environment names are case-sensitive; a context without an
+environment never matches an environment-scoped rule.
+
+If the first matching rule's variant is out of range, or its split does not
+have one percentage per variant, it is ignored and normal assignment applies;
+later rules are not tried. Rules that are malformed in any other way are
+skipped. Rule-assigned exposures are flagged `ruleOverride` so the backend can
+exclude them from analysis.
+
+### Semantic Version Operators
+
+Audience filters and rule conditions can compare versions with `semver_eq`,
+`semver_gt`, `semver_gte`, `semver_lt` and `semver_lte`, for example against a
+version attribute you set:
+
+```cpp
+context.set_attribute("app_version", "2.4.1");
+// {"semver_gte": [{"var": "app_version"}, {"value": "2.4.0"}]} matches
+```
+
+A leading `v` or `V` and build metadata are ignored, missing parts count as
+`0`, numeric parts compare numerically, and a pre-release is lower than its
+release (`1.0.0-beta < 1.0.0`). Non-version operands give no match.
+
+### SDK Identification
+
+The SDK sends `X-Agent: absmartly-cpp-sdk/<version>` with every request, so the
+backend can report which SDK versions your applications use. The version is
+the CMake project version, also available as `absmartly::SDK_VERSION` from
+`<absmartly/sdk_version.h>`.
 
 ### Custom Assignments
 
