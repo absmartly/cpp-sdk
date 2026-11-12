@@ -26,3 +26,15 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: cmake --build build --target package
+
+      - name: Check package with a find_package consumer
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg"
+          tar xzf build/absmartly-cpp-sdk-*.tar.gz -C "$RUNNER_TEMP/pkg"
+          cmake -S tests/package_consumer -B "$RUNNER_TEMP/consumer" \
+            -DCMAKE_PREFIX_PATH="$(echo "$RUNNER_TEMP"/pkg/absmartly-cpp-sdk-*)"
+          cmake --build "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/consumer"

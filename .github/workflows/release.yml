@@ -1,5 +1,11 @@
 name: Release
 
+# Pushing a v<version> tag builds, tests and packages the SDK, then publishes a
+# GitHub release with the archives attached. The tag must match the CMake
+# project version, which is also what the SDK reports in X-Agent.
+# A manual run builds and uploads the archives as artifacts only; it never
+# publishes a release.
+
 on:
   push:
     tags:
@@ -7,12 +13,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   package:
     name: Build and package
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,6 +33,24 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DABSMARTLY_BUILD_TESTS=ON
 
+      - name: Read project version
+        id: version
+        run: |
+          version=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/CMakeCache.txt)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag matches project version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "Tag $TAG does not match project version v$VERSION in CMakeLists.txt" >&2
+            exit 1
+          fi
+
       - name: Build
         run: cmake --build build --parallel
 
@@ -34,22 +60,36 @@ jobs:
       - name: Package
         run: cmake --build build --target package
 
+      - name: Check package with a find_package consumer
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg"
+          tar xzf build/absmartly-cpp-sdk-*.tar.gz -C "$RUNNER_TEMP/pkg"
+          cmake -S tests/package_consumer -B "$RUNNER_TEMP/consumer" \
+            -DCMAKE_PREFIX_PATH="$(echo "$RUNNER_TEMP"/pkg/absmartly-cpp-sdk-*)"
+          cmake --build "$RUNNER_TEMP/consumer"
+          test "$("$RUNNER_TEMP/consumer/consumer")" = "absmartly-cpp-sdk/${{ steps.version.outputs.version }}"
+
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: absmartly-cpp-sdk-${{ github.ref_name }}
-          path: build/absmartly-cpp-sdk-*
+          name: absmartly-cpp-sdk-${{ steps.version.outputs.version }}
+          path: |
+            build/absmartly-cpp-sdk-*.tar.gz
+            build/absmartly-cpp-sdk-*.zip
           if-no-files-found: error
 
   publish:
     name: Publish GitHub release
     needs: package
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download package artifacts
         uses: actions/download-artifact@v4
         with:
-          name: absmartly-cpp-sdk-${{ github.ref_name }}
+          name: absmartly-cpp-sdk-${{ needs.package.outputs.version }}
           path: dist
 
       - name: Publish release
