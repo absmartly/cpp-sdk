@@ -651,6 +651,7 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
             const std::string& unit_type = exp_data.unitType;
 
             assignment.rule_key = exp_data.assignmentRules;
+            assignment.rule_data_seq = data_seq_;
             auto rule = resolve_rule(*experiment, false);
             if (rule.has_value()) {
                 // The rule's variant wins; the audience is not consulted, so
@@ -766,6 +767,7 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
 }
 
 void Context::build_index() {
+    ++data_seq_;
     index_.clear();
     index_variables_.clear();
 
@@ -882,7 +884,15 @@ std::optional<RuleResolution> Context::resolve_rule(const ExperimentIndex& exper
 }
 
 bool Context::rule_matches(const ExperimentIndex& experiment, Assignment& assignment) {
-    const bool rules_changed = experiment.data->assignmentRules != assignment.rule_key;
+    // The rules string is compared once per data load, not on every cached read.
+    bool rules_changed = false;
+    if (assignment.rule_data_seq != data_seq_) {
+        if (experiment.data->assignmentRules == assignment.rule_key) {
+            assignment.rule_data_seq = data_seq_;
+        } else {
+            rules_changed = true;
+        }
+    }
     if (!rules_changed && attrs_seq_ <= assignment.attrs_seq) {
         return true;
     }
@@ -900,7 +910,10 @@ bool Context::rule_matches(const ExperimentIndex& experiment, Assignment& assign
     // Same outcome. Refresh the bookkeeping so an unexposed split now resolved without
     // its unit (or no longer so) is re-resolved, or kept, correctly on set_unit().
     // The caller advances attrs_seq once the audience check has also run.
-    assignment.rule_key = experiment.data->assignmentRules;
+    if (rules_changed) {
+        assignment.rule_key = experiment.data->assignmentRules;
+        assignment.rule_data_seq = data_seq_;
+    }
     if (rule.has_value()) {
         assignment.rule_missing_unit = rule->missing_unit;
     }
@@ -936,7 +949,10 @@ bool Context::audience_matches(const ExperimentData& experiment, Assignment& ass
     return true;
 }
 
-nlohmann::json Context::get_attributes_map() const {
+const nlohmann::json& Context::get_attributes_map() const {
+    if (attrs_map_cache_seq_ == attrs_seq_) {
+        return attrs_map_cache_;
+    }
     nlohmann::json attrs = nlohmann::json::object();
     // System attributes (application/environment from the client config) go in
     // first; user-set attributes overlay them, so a value the user sets under the
@@ -954,7 +970,9 @@ nlohmann::json Context::get_attributes_map() const {
     for (const auto& attr : attrs_) {
         attrs[attr.name] = attr.value;
     }
-    return attrs;
+    attrs_map_cache_ = std::move(attrs);
+    attrs_map_cache_seq_ = attrs_seq_;
+    return attrs_map_cache_;
 }
 
 std::string Context::unit_hash(const std::string& unit_type) {

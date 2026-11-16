@@ -41,6 +41,9 @@ struct Assignment {
     // The assignmentRules string this assignment was resolved against; a change
     // (a refresh) re-resolves the rules. The environment is fixed per context.
     std::string rule_key;
+    // The data load rule_key was last checked against, so cached reads skip the
+    // string comparison until the next refresh.
+    int rule_data_seq = 0;
     bool exposed = false;
     std::vector<double> traffic_split;
     std::map<std::string, nlohmann::json> variables;
@@ -134,7 +137,7 @@ private:
     bool rule_matches(const ExperimentIndex& experiment, Assignment& assignment);
     std::optional<RuleResolution> resolve_rule(const ExperimentIndex& experiment, bool unit_pinned_missing);
     void invalidate_assignments_pinned_with_missing_unit(const std::string& unit_type);
-    nlohmann::json get_attributes_map() const;
+    const nlohmann::json& get_attributes_map() const;
     std::string unit_hash(const std::string& unit_type);
 
     PublishEvent flush();
@@ -159,6 +162,11 @@ private:
     std::map<std::string, nlohmann::json> units_;
     std::vector<Attribute> attrs_;
     int attrs_seq_ = 0;
+    // get_attributes_map() memoised per attrs_seq_, as in JS.
+    mutable nlohmann::json attrs_map_cache_;
+    mutable int attrs_map_cache_seq_ = -1;
+    // Incremented by every data load (build_index), for Assignment::rule_data_seq.
+    int data_seq_ = 0;
     // System attribute names from the client config; injected under the "application"
     // and "environment" keys when the audience evaluation map is built. Empty means
     // the key is omitted. User-set attributes override them.
