@@ -516,6 +516,54 @@ TEST_CASE("Assignment rules: caching", "[assignment-rules]") {
     }
 }
 
+namespace absmartly {
+struct ContextTestAccess {
+    static Assignment& assignment(Context& ctx, const char* name) { return ctx.assignments_.at(name); }
+    static int data_seq(const Context& ctx) { return ctx.data_seq_; }
+    static const json& attributes_map(const Context& ctx) { return ctx.get_attributes_map(); }
+    static json& attributes_map_cache(Context& ctx) { return ctx.attrs_map_cache_; }
+};
+} // namespace absmartly
+
+// Losing these caches changes only CPU cost, so the tests poke a stale value into the
+// cached state and check whether a read recomputes it.
+TEST_CASE("Assignment rules: read caches", "[assignment-rules]") {
+    SECTION("a cached read does not compare the rules again until the next data load") {
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1)})));
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        auto& assignment = ContextTestAccess::assignment(ctx, "exp_test_abc");
+        REQUIRE(assignment.rule_data_seq == ContextTestAccess::data_seq(ctx));
+        assignment.rule_key = "stale";
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        REQUIRE(ContextTestAccess::assignment(ctx, "exp_test_abc").rule_key == "stale");
+    }
+
+    SECTION("a refresh with the same outcome re-stamps the assignment on its first read") {
+        auto pt = json::parse(R"({"eq":[{"var":"country"},{"value":"PT"}]})");
+        auto refreshed = make_data(rules_of({assign_rule(1), assign_rule(0, pt)}));
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1)})));
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        ctx.refresh(refreshed);
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        const auto& assignment = ContextTestAccess::assignment(ctx, "exp_test_abc");
+        REQUIRE(assignment.rule_key == refreshed.experiments[0].assignmentRules);
+        REQUIRE(assignment.rule_data_seq == ContextTestAccess::data_seq(ctx));
+        REQUIRE(exposures_for(ctx.publish(), "exp_test_abc").size() == 1);
+    }
+
+    SECTION("the attribute map is built once per attribute change") {
+        Context ctx(make_config(), make_data(nullptr));
+        ctx.set_attribute("country", "US");
+        REQUIRE(ContextTestAccess::attributes_map(ctx) == json{{"country", "US"}});
+        ContextTestAccess::attributes_map_cache(ctx)["stale"] = true;
+        REQUIRE(ContextTestAccess::attributes_map(ctx).contains("stale"));
+        ctx.set_attribute("country", "PT");
+        REQUIRE(ContextTestAccess::attributes_map(ctx) == json{{"country", "PT"}});
+    }
+}
+
 TEST_CASE("Assignment rules: split", "[assignment-rules][split]") {
     SECTION("hashes the unit with the experiment seed") {
         Context ctx(make_config(), make_data(rules_of({split_rule("70/10/20")})));

@@ -127,6 +127,9 @@ public:
     void refresh(const ContextData& new_data);
 
 private:
+    // Lets the tests pin the read caches, whose loss changes only CPU cost.
+    friend struct ContextTestAccess;
+
     Assignment& get_or_create_assignment(const std::string& experiment_name);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
 
