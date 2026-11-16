@@ -162,10 +162,8 @@ private:
     std::map<std::string, nlohmann::json> units_;
     std::vector<Attribute> attrs_;
     int attrs_seq_ = 0;
-    // get_attributes_map() memoised per attrs_seq_, as in JS.
     mutable nlohmann::json attrs_map_cache_;
     mutable int attrs_map_cache_seq_ = -1;
-    // Incremented by every data load (build_index), for Assignment::rule_data_seq.
     int data_seq_ = 0;
     // System attribute names from the client config; injected under the "application"
     // and "environment" keys when the audience evaluation map is built. Empty means
