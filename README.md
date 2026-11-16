@@ -379,11 +379,12 @@ value (an `eq` equality filter, for example, does not match). `app_version` is
 not injected.
 
 When you create a context through `SDK::create_context()` /
-`create_context_with()`, these names are taken from the `ClientConfig`, unless
-the `ContextConfig` you pass already sets `application` or `environment`: a
-non-empty value there takes precedence, for audiences and for assignment rules
-(including which environment an environment-scoped rule matches). When you
-construct a `Context` directly, set them on the `ContextConfig`:
+`create_context_with()`, these names are always taken from the `ClientConfig`,
+the same names the collector receives, for audiences and for assignment rules
+(including which environment an environment-scoped rule matches); any
+`application` or `environment` on the `ContextConfig` you pass is ignored. Only
+when you construct a `Context` directly do you set them on the `ContextConfig`,
+and they should match the names your client sends:
 
 ```cpp
 absmartly::ContextConfig config;

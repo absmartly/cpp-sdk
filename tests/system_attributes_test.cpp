@@ -311,18 +311,24 @@ TEST_CASE("System attributes: create_context inherits the client application/env
     REQUIRE(ctx->treatment("exp_system") == 1);
 }
 
-TEST_CASE("System attributes: explicit ContextConfig values override the client config",
+TEST_CASE("System attributes: SDK-created contexts always use the client config names",
           "[system-attributes][sdk]") {
+    // The collector scopes by the client's X-Environment, so a ContextConfig value
+    // must not make the SDK evaluate audiences or rules for another environment.
     auto data = make_system_audience_data(
-        R"({"filter":[{"eq":[{"var":"environment"},{"value":"staging"}]}]})");
+        R"({"filter":[{"eq":[{"var":"environment"},{"value":"production"}]}]})");
     auto sdk = make_sdk(data, "website", "production");
 
     ContextConfig ctx_config;
     ctx_config.units = {{"session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}};
     ctx_config.environment = "staging";
+    ctx_config.application = "other";
 
-    auto ctx = sdk->create_context_with(ctx_config, data);
-    ctx->wait_until_ready();
+    auto with = sdk->create_context_with(ctx_config, data);
+    with->wait_until_ready();
+    REQUIRE(with->treatment("exp_system") == 1);
 
-    REQUIRE(ctx->treatment("exp_system") == 1);
+    auto created = sdk->create_context(ctx_config);
+    created->wait_until_ready();
+    REQUIRE(created->treatment("exp_system") == 1);
 }

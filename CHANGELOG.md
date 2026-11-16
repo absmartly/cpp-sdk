@@ -14,15 +14,23 @@
   first matching rule's variant is out of range, or its split does not have one
   percentage per variant, normal assignment applies and later rules are not
   tried. Ports javascript-sdk#66 and java-sdk#17.
+  An `assignmentRules` value that is not a JSON object means no rules for that
+  experiment, without an `error` event (JS and Java only log it).
+- `ContextConfig::application` / `environment`, the system attribute names for
+  a `Context` constructed directly. `SDK::create_context()` /
+  `create_context_with()` always set them from the client config, the names the
+  collector scopes by.
 - `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` operators
   for audience filters and rule conditions.
-- `X-Agent: absmartly-cpp-sdk/<version>` (was `absmartly-cpp-sdk`), with the
-  version generated from the CMake project version into
-  `<absmartly/sdk_version.h>`.
+- `<absmartly/sdk_version.h>`, generated from the CMake project version
+  (`SDK_NAME`, `SDK_VERSION`, `SDK_AGENT`).
 - CMake install/export (`find_package(absmartly-sdk)`, target
   `absmartly::absmartly-sdk`), CPack `.tar.gz`/`.zip` archives, and a release
   workflow that builds, tests and attaches them to a GitHub release on `v*`
-  tags.
+  tags. The install and package rules are generated only when the SDK is the
+  top-level project (option `ABSMARTLY_INSTALL`), so a project that embeds it
+  with `FetchContent`/`add_subdirectory` keeps its own install tree and CPack
+  configuration.
 
 ### Fixed
 
@@ -30,6 +38,11 @@
   stale and rebuilt (re-queuing its exposure) on every `treatment()` call.
 
 ### Changed
+
+- `X-Agent` is now `absmartly-cpp-sdk/<version>` (was `absmartly-cpp-sdk`).
+  This changes the `agent` value recorded for your requests, and so the agent
+  column in data exports. A build that compiles the sources without CMake has
+  no generated version header and keeps sending `absmartly-cpp-sdk`.
 
 - Audiences and assignment-rule conditions are now always evaluated with the
   `application` and `environment` names from the client configuration. The SDK
@@ -45,6 +58,10 @@
   the evaluation map and the missing attribute failed the filter. Those
   experiments are broken today. After upgrading, such a unit is randomised
   normally.
+
+  Experiments with a **non-strict** audience on `environment` or `application`
+  keep their variants (the audience never affected their assignment), but their
+  exposures stop being flagged `audienceMismatch` when the names match.
 
 - `app_version` / `application_version` is not injected as an evaluation
   attribute. A filter on `app_version` does not match even when an application

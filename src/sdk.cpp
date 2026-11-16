@@ -71,15 +71,12 @@ std::unique_ptr<Context> SDK::create_context_with(const ContextConfig& config, C
 
 ContextConfig SDK::with_client_system_attributes(const ContextConfig& config) const {
     ContextConfig cfg = config;
-    // Default the system attribute names from the client config; an explicit value
-    // on the passed config wins, so callers can still override them.
+    // The system attribute names always come from the client config, as in JS: the
+    // collector scopes by the client's X-Application/X-Environment, so audiences and
+    // environment-scoped rules must be evaluated with the same names.
     if (client_) {
-        if (cfg.application.empty()) {
-            cfg.application = client_->application();
-        }
-        if (cfg.environment.empty()) {
-            cfg.environment = client_->environment();
-        }
+        cfg.application = client_->application();
+        cfg.environment = client_->environment();
     }
     return cfg;
 }
