@@ -62,52 +62,58 @@ target_link_libraries(absmartly-sdk PUBLIC
   $<INSTALL_INTERFACE:CURL::libcurl>
 )
 
-set(ABSMARTLY_BUILD_TESTS_DEFAULT OFF)
+# Tests, install rules and packaging default on only when the SDK is the top-level
+# project, so an embedding project (FetchContent/add_subdirectory) keeps its own
+# install tree and CPack configuration.
+set(ABSMARTLY_IS_TOP_LEVEL OFF)
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-  set(ABSMARTLY_BUILD_TESTS_DEFAULT ON)
+  set(ABSMARTLY_IS_TOP_LEVEL ON)
 endif()
-option(ABSMARTLY_BUILD_TESTS "Build tests" ${ABSMARTLY_BUILD_TESTS_DEFAULT})
+option(ABSMARTLY_BUILD_TESTS "Build tests" ${ABSMARTLY_IS_TOP_LEVEL})
 if(ABSMARTLY_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
 
-install(TARGETS absmartly-sdk absmartly-sdk-json
-  EXPORT absmartly-sdk-targets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(DIRECTORY ${ABSMARTLY_GENERATED_INCLUDE_DIR}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(DIRECTORY ${json_SOURCE_DIR}/include/nlohmann DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+option(ABSMARTLY_INSTALL "Generate install and package rules" ${ABSMARTLY_IS_TOP_LEVEL})
+if(ABSMARTLY_INSTALL)
+  install(TARGETS absmartly-sdk absmartly-sdk-json
+    EXPORT absmartly-sdk-targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+  install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  install(DIRECTORY ${ABSMARTLY_GENERATED_INCLUDE_DIR}/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  install(DIRECTORY ${json_SOURCE_DIR}/include/nlohmann DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-set(ABSMARTLY_CMAKE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/absmartly-sdk)
-configure_package_config_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/absmartly-sdkConfig.cmake.in
-  ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfig.cmake
-  INSTALL_DESTINATION ${ABSMARTLY_CMAKE_INSTALL_DIR}
-)
-write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfigVersion.cmake
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion
-)
-install(EXPORT absmartly-sdk-targets
-  FILE absmartly-sdk-targets.cmake
-  NAMESPACE absmartly::
-  DESTINATION ${ABSMARTLY_CMAKE_INSTALL_DIR}
-)
-install(FILES
-  ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfig.cmake
-  ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfigVersion.cmake
-  DESTINATION ${ABSMARTLY_CMAKE_INSTALL_DIR}
-)
+  set(ABSMARTLY_CMAKE_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/absmartly-sdk)
+  configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/absmartly-sdkConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfig.cmake
+    INSTALL_DESTINATION ${ABSMARTLY_CMAKE_INSTALL_DIR}
+  )
+  write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+  )
+  install(EXPORT absmartly-sdk-targets
+    FILE absmartly-sdk-targets.cmake
+    NAMESPACE absmartly::
+    DESTINATION ${ABSMARTLY_CMAKE_INSTALL_DIR}
+  )
+  install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/absmartly-sdkConfigVersion.cmake
+    DESTINATION ${ABSMARTLY_CMAKE_INSTALL_DIR}
+  )
 
-set(CPACK_PACKAGE_NAME "absmartly-cpp-sdk")
-set(CPACK_PACKAGE_VENDOR "A/B Smartly")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A/B Smartly C++ SDK")
-set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-set(CPACK_GENERATOR "TGZ;ZIP")
-include(CPack)
+  set(CPACK_PACKAGE_NAME "absmartly-cpp-sdk")
+  set(CPACK_PACKAGE_VENDOR "A/B Smartly")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A/B Smartly C++ SDK")
+  set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+  set(CPACK_GENERATOR "TGZ;ZIP")
+  include(CPack)
+endif()

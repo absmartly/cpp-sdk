@@ -45,3 +45,16 @@ jobs:
             agent=$("$dir-consumer/consumer")
             echo "$archive: $agent"
           done
+
+      - name: Check an add_subdirectory consumer keeps its own install and package
+        run: |
+          dir="$RUNNER_TEMP/subdirectory-consumer"
+          cmake -S tests/subdirectory_consumer -B "$dir" -DABSMARTLY_SDK_SOURCE_DIR="$PWD"
+          cmake --build "$dir" --parallel
+          "$dir/app"
+          cmake --install "$dir" --prefix "$dir/prefix"
+          installed=$(cd "$dir/prefix" && find . -type f | sort)
+          echo "$installed"
+          test "$installed" = "./bin/app"
+          grep -q 'set(CPACK_PACKAGE_NAME "embedding-app")' "$dir/CPackConfig.cmake"
+          grep -q 'set(CPACK_GENERATOR "TGZ")' "$dir/CPackConfig.cmake"
