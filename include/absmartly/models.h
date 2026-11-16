@@ -66,6 +66,9 @@ struct ExperimentData {
     std::vector<CustomFieldValue> customFieldValues;
     std::string application;
     std::string environment;
+    // JSON string of ordered assignment rules ({"rules": [...]}); empty when the
+    // experiment has none. A value sent as anything but a string is ignored.
+    std::string assignmentRules;
 };
 
 inline void to_json(nlohmann::json& j, const ExperimentData& e) {
@@ -89,6 +92,9 @@ inline void to_json(nlohmann::json& j, const ExperimentData& e) {
         {"application", e.application},
         {"environment", e.environment}
     };
+    if (!e.assignmentRules.empty()) {
+        j["assignmentRules"] = e.assignmentRules;
+    }
 }
 
 inline void from_json(const nlohmann::json& j, ExperimentData& e) {
@@ -139,6 +145,9 @@ inline void from_json(const nlohmann::json& j, ExperimentData& e) {
     if (j.contains("environment") && j["environment"].is_string()) {
         j.at("environment").get_to(e.environment);
     }
+    if (j.contains("assignmentRules") && j["assignmentRules"].is_string()) {
+        j.at("assignmentRules").get_to(e.assignmentRules);
+    }
 }
 
 struct ContextData {
@@ -165,6 +174,9 @@ struct Exposure {
     bool fullOn = false;
     bool custom = false;
     bool audienceMismatch = false;
+    // Set when a matching assignment rule chose the variant, so the backend can
+    // exclude the exposure from analysis.
+    bool ruleOverride = false;
 };
 
 inline void to_json(nlohmann::json& j, const Exposure& e) {
@@ -179,7 +191,8 @@ inline void to_json(nlohmann::json& j, const Exposure& e) {
         {"overridden", e.overridden},
         {"fullOn", e.fullOn},
         {"custom", e.custom},
-        {"audienceMismatch", e.audienceMismatch}
+        {"audienceMismatch", e.audienceMismatch},
+        {"ruleOverride", e.ruleOverride}
     };
 }
 
@@ -195,6 +208,7 @@ inline void from_json(const nlohmann::json& j, Exposure& e) {
     if (j.contains("fullOn")) j.at("fullOn").get_to(e.fullOn);
     if (j.contains("custom")) j.at("custom").get_to(e.custom);
     if (j.contains("audienceMismatch")) j.at("audienceMismatch").get_to(e.audienceMismatch);
+    if (j.contains("ruleOverride")) j.at("ruleOverride").get_to(e.ruleOverride);
 }
 
 struct GoalAchievement {

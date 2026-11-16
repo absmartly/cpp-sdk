@@ -5,6 +5,150 @@
 
 using namespace absmartly;
 using json = nlohmann::json;
+// Vectors mirror the JS SDK's versionCompare() tests so every SDK orders the same inputs the same way.
+TEST_CASE("Evaluator::version_compare", "[operators][semver]") {
+    const auto cmp = [](const json& a, const json& b) { return Evaluator::version_compare(a, b); };
+
+    SECTION("equal versions") {
+        REQUIRE(cmp("1.0.0", "1.0.0") == 0);
+        REQUIRE(cmp("0.0.0", "0.0.0") == 0);
+        REQUIRE(cmp("999.999.999", "999.999.999") == 0);
+    }
+
+    SECTION("major, minor and patch") {
+        REQUIRE(cmp("2.0.0", "1.0.0") == 1);
+        REQUIRE(cmp("1.0.0", "2.0.0") == -1);
+        REQUIRE(cmp("1.2.0", "1.1.0") == 1);
+        REQUIRE(cmp("1.1.0", "1.2.0") == -1);
+        REQUIRE(cmp("1.0.2", "1.0.1") == 1);
+        REQUIRE(cmp("1.0.1", "1.0.2") == -1);
+    }
+
+    SECTION("numeric, not lexicographic") {
+        REQUIRE(cmp("1.10.0", "1.9.0") == 1);
+        REQUIRE(cmp("1.9.0", "1.10.0") == -1);
+        REQUIRE(cmp("10.0.0", "9.0.0") == 1);
+    }
+
+    SECTION("missing parts count as 0") {
+        REQUIRE(cmp("1.2", "1.2.0") == 0);
+        REQUIRE(cmp("1", "1.0.0") == 0);
+        REQUIRE(cmp("1.2.0", "1.2") == 0);
+        REQUIRE(cmp("1.0.0", "1") == 0);
+    }
+
+    SECTION("leading zeros") {
+        REQUIRE(cmp("1.02.0", "1.2.0") == 0);
+        REQUIRE(cmp("1.002.030", "1.2.30") == 0);
+        REQUIRE(cmp("01.0.0", "1.0.0") == 0);
+        REQUIRE(cmp("1.02.0", "1.3.0") == -1);
+    }
+
+    SECTION("pre-releases") {
+        REQUIRE(cmp("1.0.0", "1.0.0-alpha") == 1);
+        REQUIRE(cmp("1.0.0-alpha", "1.0.0") == -1);
+        REQUIRE(cmp("1.0.0-alpha", "1.0.0-alpha") == 0);
+        REQUIRE(cmp("1.0.0-alpha", "1.0.0-beta") == -1);
+        REQUIRE(cmp("1.0.0-beta", "1.0.0-alpha") == 1);
+        REQUIRE(cmp("1.0.0-alpha.1", "1.0.0-alpha.2") == -1);
+        REQUIRE(cmp("1.0.0-alpha.2", "1.0.0-alpha.1") == 1);
+        REQUIRE(cmp("1.0.0-1", "1.0.0-2") == -1);
+        REQUIRE(cmp("1.0.0-2", "1.0.0-1") == 1);
+        REQUIRE(cmp("1.0.0-beta.2", "1.0.0-beta.10") == -1);
+    }
+
+    SECTION("numeric pre-release identifiers rank below alphanumeric ones") {
+        REQUIRE(cmp("1.0.0-1", "1.0.0-alpha") == -1);
+        REQUIRE(cmp("1.0.0-alpha", "1.0.0-1") == 1);
+    }
+
+    SECTION("fewer pre-release identifiers rank lower") {
+        REQUIRE(cmp("1.0.0-alpha", "1.0.0-alpha.1") == -1);
+        REQUIRE(cmp("1.0.0-alpha.1", "1.0.0-alpha") == 1);
+    }
+
+    SECTION("v prefix is stripped") {
+        REQUIRE(cmp("v1.0.0", "1.0.0") == 0);
+        REQUIRE(cmp("V1.0.0", "1.0.0") == 0);
+        REQUIRE(cmp("v1.0.0", "V1.0.0") == 0);
+    }
+
+    SECTION("build metadata is ignored") {
+        REQUIRE(cmp("1.0.0+build1", "1.0.0+build2") == 0);
+        REQUIRE(cmp("1.0.0+build1", "1.0.0") == 0);
+        REQUIRE(cmp("1.0.0-alpha+build1", "1.0.0-alpha+build2") == 0);
+        REQUIRE(cmp("1.0.0-alpha+build1", "1.0.0-beta") == -1);
+        REQUIRE(cmp("1.0.0-alpha+build1", "1.0.0") == -1);
+    }
+
+    SECTION("non-string inputs are converted like other operators") {
+        REQUIRE(cmp(1, "1.0.0") == 0);
+        REQUIRE(cmp("1.0.0", 1) == 0);
+        REQUIRE(cmp(2.5, "2.5.0") == 0);
+        REQUIRE(cmp(true, "true") == 0);
+    }
+
+    // Deliberately as permissive as the JS and Java SDKs (an empty pre-release or build
+    // suffix reads as a release; a non-numeric core part compares as alphanumeric), so
+    // every SDK orders the same malformed inputs the same way.
+    SECTION("lenient parsing matches the other SDKs") {
+        REQUIRE(cmp("2.4.1-", "2.4.1") == 0);
+        REQUIRE(cmp("2.4.1+", "2.4.1") == 0);
+        REQUIRE(cmp("1..0", "1.0.0") == 1);
+        REQUIRE(cmp("1.0.0-alpha..1", "1.0.0-alpha.0.1") == 1);
+        REQUIRE(cmp("1.x", "1.0") == 1);
+    }
+
+    SECTION("null for null, unconvertible or empty-core inputs") {
+        REQUIRE_FALSE(cmp(nullptr, "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("1.0.0", nullptr).has_value());
+        REQUIRE_FALSE(cmp(nullptr, nullptr).has_value());
+        REQUIRE_FALSE(cmp(json::object(), "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("1.0.0", json::object()).has_value());
+        REQUIRE_FALSE(cmp(json::array(), "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("", "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("1.0.0", "").has_value());
+        REQUIRE_FALSE(cmp("", "").has_value());
+        REQUIRE_FALSE(cmp("v", "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("V", "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("+build", "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("v+build", "1.0.0").has_value());
+        REQUIRE_FALSE(cmp("1.0.0", "v").has_value());
+        REQUIRE_FALSE(cmp("-beta", "1.0.0").has_value());
+    }
+}
+
+TEST_CASE("Semver operators", "[operators][semver]") {
+    Evaluator evaluator;
+    const json vars = {{"app_version", "2.4.1-beta.2"}, {"version", 2.5}};
+    const auto expr = [](const std::string& op, const json& lhs, const json& rhs) {
+        return json{{op, json::array({lhs, rhs})}};
+    };
+    const json app_version = {{"var", "app_version"}};
+    const auto value = [](const json& v) { return json{{"value", v}}; };
+
+    REQUIRE(evaluator.evaluate(expr("semver_gte", app_version, value("2.4.0")), vars) == true);
+    REQUIRE(evaluator.evaluate(expr("semver_lt", app_version, value("2.4.1")), vars) == true);
+    REQUIRE(evaluator.evaluate(expr("semver_gt", app_version, value("2.4.1-beta.1")), vars) == true);
+    REQUIRE(evaluator.evaluate(expr("semver_lte", app_version, value("2.4.1-beta.2")), vars) == true);
+    REQUIRE(evaluator.evaluate(expr("semver_eq", app_version, value("2.4.1-beta.2")), vars) == true);
+    REQUIRE(evaluator.evaluate(expr("semver_eq", app_version, value("2.4.1")), vars) == false);
+    REQUIRE(evaluator.evaluate(expr("semver_gt", app_version, value("2.4.1")), vars) == false);
+
+    SECTION("numbers are converted to strings first") {
+        REQUIRE(evaluator.evaluate(expr("semver_eq", json{{"var", "version"}}, value("2.5.0")), vars) == true);
+        REQUIRE(evaluator.evaluate(expr("semver_gt", json{{"var", "version"}}, value("2.5.0")), vars) == false);
+        REQUIRE(evaluator.evaluate(expr("semver_lt", json{{"var", "version"}}, value("2.10")), vars) == true);
+    }
+
+    SECTION("null when an operand is missing or not a version") {
+        REQUIRE(evaluator.evaluate(expr("semver_eq", json{{"var", "missing"}}, value("2.4.1")), vars).is_null());
+        REQUIRE(evaluator.evaluate(expr("semver_eq", value("v"), value("1.0.0")), vars).is_null());
+        REQUIRE(evaluator.evaluate(json{{"semver_eq", json::array({value("1.0.0")})}}, vars).is_null());
+        REQUIRE(evaluator.evaluate(json{{"semver_eq", value("1.0.0")}}, vars).is_null());
+        REQUIRE_FALSE(evaluator.evaluate_boolean(expr("semver_eq", json{{"var", "missing"}}, value("2.4.1")), vars));
+    }
+}
 
 TEST_CASE("ValueOperator", "[operators][value]") {
     Evaluator evaluator;

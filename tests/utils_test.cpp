@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "absmartly/hashing.h"
+#include "absmartly/sdk_version.h"
 #include <limits>
 #include <string>
 #include <vector>
@@ -102,4 +103,10 @@ TEST_CASE("Fix: choose_variant returns 0 for empty split", "[utils][fix44]") {
     REQUIRE(choose_variant({}, 0.0) == 0);
     REQUIRE(choose_variant({}, 0.5) == 0);
     REQUIRE(choose_variant({}, 1.0) == 0);
+}
+
+TEST_CASE("SDK identity comes from the CMake project version", "[sdk-version]") {
+    REQUIRE(std::string(absmartly::SDK_NAME) == "absmartly-cpp-sdk");
+    REQUIRE(std::string(absmartly::SDK_VERSION) == ABSMARTLY_PROJECT_VERSION);
+    REQUIRE(std::string(absmartly::SDK_AGENT) == std::string("absmartly-cpp-sdk/") + ABSMARTLY_PROJECT_VERSION);
 }

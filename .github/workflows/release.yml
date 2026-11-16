@@ -1,0 +1,107 @@
+name: Release
+
+# Pushing a v<version> tag builds, tests and packages the SDK, then publishes a
+# GitHub release with the archives attached. The tag must match the CMake
+# project version, which is also what the SDK reports in X-Agent.
+# A manual run builds and uploads the archives as artifacts only; it never
+# publishes a release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and package
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libcurl4-openssl-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DABSMARTLY_BUILD_TESTS=ON
+
+      - name: Read project version
+        id: version
+        run: |
+          version=$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' build/CMakeCache.txt)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag matches project version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "Tag $TAG does not match project version v$VERSION in CMakeLists.txt" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: cmake --build build --target package
+
+      - name: Check packages with a find_package consumer
+        run: |
+          for archive in build/absmartly-cpp-sdk-*.tar.gz build/absmartly-cpp-sdk-*.zip; do
+            dir="$RUNNER_TEMP/pkg-$(basename "$archive")"
+            mkdir -p "$dir"
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$dir" ;;
+              *) tar xzf "$archive" -C "$dir" ;;
+            esac
+            cmake -S tests/package_consumer -B "$dir-consumer" \
+              -DCMAKE_PREFIX_PATH="$(echo "$dir"/absmartly-cpp-sdk-*)"
+            cmake --build "$dir-consumer"
+            agent=$("$dir-consumer/consumer")
+            echo "$archive: $agent"
+            test "$agent" = "absmartly-cpp-sdk/${{ steps.version.outputs.version }}"
+          done
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: absmartly-cpp-sdk-${{ steps.version.outputs.version }}
+          path: |
+            build/absmartly-cpp-sdk-*.tar.gz
+            build/absmartly-cpp-sdk-*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: absmartly-cpp-sdk-${{ needs.package.outputs.version }}
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

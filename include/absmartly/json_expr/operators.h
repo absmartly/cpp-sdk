@@ -119,6 +119,51 @@ public:
     ) const override;
 };
 
+class SemverEqOperator : public Operator {
+public:
+    nlohmann::json evaluate(
+        const Evaluator& evaluator,
+        const nlohmann::json& args,
+        const nlohmann::json& vars
+    ) const override;
+};
+
+class SemverGtOperator : public Operator {
+public:
+    nlohmann::json evaluate(
+        const Evaluator& evaluator,
+        const nlohmann::json& args,
+        const nlohmann::json& vars
+    ) const override;
+};
+
+class SemverGteOperator : public Operator {
+public:
+    nlohmann::json evaluate(
+        const Evaluator& evaluator,
+        const nlohmann::json& args,
+        const nlohmann::json& vars
+    ) const override;
+};
+
+class SemverLtOperator : public Operator {
+public:
+    nlohmann::json evaluate(
+        const Evaluator& evaluator,
+        const nlohmann::json& args,
+        const nlohmann::json& vars
+    ) const override;
+};
+
+class SemverLteOperator : public Operator {
+public:
+    nlohmann::json evaluate(
+        const Evaluator& evaluator,
+        const nlohmann::json& args,
+        const nlohmann::json& vars
+    ) const override;
+};
+
 class InOperator : public Operator {
 public:
     nlohmann::json evaluate(
