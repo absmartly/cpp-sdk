@@ -149,6 +149,18 @@ TEST_CASE("System attributes: missing config means no key and no match", "[syste
     REQUIRE(event.exposures[0].audienceMismatch == true);
 }
 
+TEST_CASE("System attributes: empty names are absent, not empty strings", "[system-attributes]") {
+    // eq cannot tell an absent key from "", but null can: an injected "" would make
+    // these filters fail and strict mode serve control.
+    auto env = make_system_audience_data(R"({"filter":[{"null":{"var":"environment"}}]})");
+    Context c1(make_system_config("website", ""), env);
+    REQUIRE(c1.treatment("exp_system") == 1);
+
+    auto app = make_system_audience_data(R"({"filter":[{"null":{"var":"application"}}]})");
+    Context c2(make_system_config("", "production"), app);
+    REQUIRE(c2.treatment("exp_system") == 1);
+}
+
 TEST_CASE("System attributes: nothing extra is published", "[system-attributes]") {
     auto data = make_system_audience_data(
         R"({"filter":[{"eq":[{"var":"environment"},{"value":"production"}]}]})");
@@ -205,6 +217,10 @@ TEST_CASE("System attributes: app_version is not injected", "[system-attributes]
     auto event = ctx.publish();
     REQUIRE(event.exposures.size() == 1);
     REQUIRE(event.exposures[0].audienceMismatch == true);
+
+    // The key is absent whatever value an injection would use, not just "0".
+    Context absent(config, make_system_audience_data(R"({"filter":[{"null":{"var":"app_version"}}]})"));
+    REQUIRE(absent.treatment("exp_system") == 1);
 }
 
 // A never-called HTTP client; the data provider below bypasses the network, so

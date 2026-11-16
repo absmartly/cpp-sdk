@@ -178,13 +178,17 @@ TEST_CASE("Assignment rules: assign", "[assignment-rules]") {
         REQUIRE(ctx.treatment("exp_test_abc") == 1);
     }
 
-    SECTION("invalid or non-object assignmentRules fall back to normal assignment with an error event") {
+    SECTION("invalid or non-object assignmentRules fall back to normal assignment without an error event") {
+        // As in JS and Java, which only log it: a healthy, ready context must not
+        // report an error to the customer's logger, before ready or on refresh.
         for (const char* rules : {"{not json", "[]", "5", "\"rules\""}) {
             auto logger = std::make_shared<ErrorCounter>();
             Context ctx(make_config(), make_data(json(rules)), logger);
             ctx.set_attribute("country", "US");
             REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
-            REQUIRE(logger->errors == 1);
+            ctx.refresh(make_data(json(rules)));
+            REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+            REQUIRE(logger->errors == 0);
         }
     }
 
@@ -233,6 +237,12 @@ TEST_CASE("Assignment rules: environments", "[assignment-rules]") {
 
     SECTION("an environment-scoped rule never matches a context without an environment") {
         Context ctx(make_config(), make_data(rules_of({assign_rule(1, us_condition(), {"production"})})));
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
+    }
+
+    SECTION("an empty environment name in the list does not match a context without an environment") {
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1, us_condition(), {""})})));
         ctx.set_attribute("country", "US");
         REQUIRE(ctx.treatment("exp_test_abc") == NORMAL_VARIANT);
     }
@@ -306,6 +316,15 @@ TEST_CASE("Assignment rules: precedence and exposure flags", "[assignment-rules]
         ctx.treatment("exp_test_abc");
         json payload = ctx.publish();
         REQUIRE(payload["exposures"][0]["ruleOverride"] == true);
+    }
+
+    SECTION("ruleOverride false is serialized too, as in JS") {
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1)})));
+        ctx.set_attribute("country", "UK");
+        ctx.treatment("exp_test_abc");
+        json payload = ctx.publish();
+        REQUIRE(payload["exposures"][0].contains("ruleOverride"));
+        REQUIRE(payload["exposures"][0]["ruleOverride"] == false);
     }
 
     SECTION("an override wins over a rule, with override flags") {
@@ -711,6 +730,19 @@ TEST_CASE("Assignment rules: JSON model", "[assignment-rules]") {
         REQUIRE(data.experiments[1].assignmentRules.empty());
         REQUIRE(data.experiments[2].assignmentRules.empty());
         REQUIRE(data.experiments[3].assignmentRules.empty());
+    }
+
+    SECTION("unknown fields in the payload and in the rules are ignored") {
+        auto data = json::parse(R"({"futureTop":{"x":1},"experiments":[
+            {"id":1,"name":"a","unitType":"session_id","iteration":1,"seedHi":0,"seedLo":0,
+             "split":[0.5,0.5],"trafficSeedHi":0,"trafficSeedLo":0,"trafficSplit":[0,1],
+             "fullOnVariant":0,"audience":"","audienceStrict":false,"futureExp":[1,2],
+             "variants":[{"name":"A","config":null,"futureVariant":true},{"name":"B","config":null}],
+             "assignmentRules":"{\"futureRules\":1,\"rules\":[{\"type\":\"future\",\"variant\":0},{\"type\":\"assign\",\"variant\":0,\"conditions\":{\"future_op\":[1]}},{\"type\":\"assign\",\"variant\":1,\"futureRule\":\"x\"}]}"}
+        ]})").get<ContextData>();
+        Context ctx(make_config(), data);
+        REQUIRE(ctx.treatment("a") == 1);
+        REQUIRE(exposures_for(ctx.publish(), "a")[0].ruleOverride);
     }
 
     SECTION("assignmentRules round-trips and is omitted when empty") {

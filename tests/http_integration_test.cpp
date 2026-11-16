@@ -220,6 +220,7 @@ TEST_CASE("Real HTTP client hits local server with the wire contract", "[integra
     REQUIRE(get.path.substr(0, get.path.find('?')) == "/context");
     REQUIRE(get.path.find("application=www") != std::string::npos);
     REQUIRE(get.path.find("environment=test") != std::string::npos);
+    REQUIRE(get.headers.at("x-application-version") == "0");
     REQUIRE(get.headers.at("x-agent") == std::string("absmartly-cpp-sdk/") + absmartly::SDK_VERSION);
 
     const auto& put = requests[1];
