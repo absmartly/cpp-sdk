@@ -422,6 +422,33 @@ later rules are not tried. Rules that are malformed in any other way are
 skipped. Rule-assigned exposures are flagged `ruleOverride` so the backend can
 exclude them from analysis.
 
+### Holdouts
+
+A holdout keeps a share of your units out of a group of experiments, so you can
+measure the combined effect of everything the group ships. Holdouts are set up
+in the Web Console and arrive with the context data
+(`ContextData::holdouts`); each experiment lists the holdouts covering it in
+`ExperimentData::holdoutIds`. There is nothing to call: `treatment()`,
+`peek()`, `variable_value()` and `peek_variable_value()` apply them.
+
+- The unit is randomised into one of the holdout's arms with the covered
+  experiment's unit type. Arm 0 holds the unit out. A holdout with three arms
+  (a three-way split) also holds the unit out at arm 1, but only of covered
+  experiments that are not full-on; full-on experiments keep their full-on
+  variant there. Any other arm leaves the experiment to its normal assignment.
+- A unit held out by any one of an experiment's holdouts gets variant 0, with
+  the control variant's variables, and the experiment publishes no exposure of
+  its own. A holdout beats audience targeting, full-on and custom assignments.
+  `set_override()` and a matching assignment rule still win over it.
+- The first `treatment()` or `variable_value()` on a covered experiment also
+  publishes one exposure for each covering holdout (its id, name and arm), once
+  per holdout and unit type. `peek()` and `peek_variable_value()` publish
+  nothing.
+- The arm is kept until the holdout's iteration changes; other edits to the
+  holdout do not re-randomise the unit.
+
+Payloads without holdouts behave exactly as before.
+
 ### Semantic Version Operators
 
 Audience filters and rule conditions can compare versions with `semver_eq`,

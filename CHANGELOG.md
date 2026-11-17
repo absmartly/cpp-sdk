@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (unreleased)
+
+### Added
+
+- Holdouts (`ContextData::holdouts`, `HoldoutData`, `ExperimentData::holdoutIds`
+  and `ExperimentData::holdoutType`, all new fields appended last and empty by
+  default). An experiment covered by a holdout that holds the unit out
+  (arm 0, or arm 1 of a three-arm holdout for an experiment that is not
+  full-on) returns variant 0 with control variables and publishes no exposure
+  of its own; each covering holdout publishes one ordinary exposure per unit
+  type. Overrides and matching assignment rules win over a holdout. Payloads
+  without holdouts assign and publish exactly as before. Ports javascript-sdk#65
+  and java-sdk#12.
+
+## 1.0.0
 
 ### Added
 
