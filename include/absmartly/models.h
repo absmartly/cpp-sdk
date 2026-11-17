@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <string>
 #include <vector>
 #include <map>
@@ -137,24 +138,29 @@ inline bool get_int(const nlohmann::json& j, int& out) {
     return false;
 }
 
-// A seed as JS reads it: an integer (or integral float) wrapped to its low 32 bits.
+// A seed as JS reads it (ECMAScript ToInt32): truncated toward zero and wrapped to
+// 32 bits, so 4294967297 reads as 1 and 1e20 as 1661992960.
 inline bool get_seed(const nlohmann::json& j, int32_t& out) {
-    int64_t value = 0;
     if (j.is_number_unsigned()) {
-        value = static_cast<int64_t>(j.get<uint64_t>());
-    } else if (j.is_number_integer()) {
-        value = j.get<int64_t>();
-    } else if (j.is_number_float()) {
-        const double d = j.get<double>();
-        if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0) || static_cast<double>(static_cast<int64_t>(d)) != d) {
-            return false;
-        }
-        value = static_cast<int64_t>(d);
-    } else {
-        return false;
+        out = static_cast<int32_t>(static_cast<uint32_t>(j.get<uint64_t>()));
+        return true;
     }
-    out = static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(value) & 0xffffffffu));
-    return true;
+    if (j.is_number_integer()) {
+        out = static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(j.get<int64_t>())));
+        return true;
+    }
+    if (j.is_number_float()) {
+        const double d = j.get<double>();
+        if (!std::isfinite(d)) {
+            out = 0;
+            return true;
+        }
+        double wrapped = std::fmod(std::trunc(d), 4294967296.0);
+        if (wrapped < 0) wrapped += 4294967296.0;
+        out = static_cast<int32_t>(static_cast<uint32_t>(wrapped));
+        return true;
+    }
+    return false;
 }
 
 } // namespace detail

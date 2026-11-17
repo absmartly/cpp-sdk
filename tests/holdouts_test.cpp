@@ -1692,17 +1692,33 @@ TEST_CASE("Holdouts: an uncovered experiment resolves without holdout bookkeepin
     REQUIRE(extra_cost(data_of({holdout}, {covered_by(plain, {11}), warm_up})) > 2);
 }
 
-TEST_CASE("Holdouts: out-of-range or non-integral holdout numbers keep their defaults", "[holdouts][json]") {
+TEST_CASE("Holdouts: an out-of-range or non-integral iteration keeps its default; seeds read as JS ToInt32",
+          "[holdouts][json]") {
     const auto holdout = json::parse(R"({"id": 11, "iteration": 1e20, "seedHi": 1e20, "seedLo": 4294967297,
                                          "split": [0.1, 0.9]})").get<HoldoutData>();
     REQUIRE(holdout.iteration == 0);
-    REQUIRE(holdout.seedHi == 0);
-    // Seeds wrap to their low 32 bits, as JS reads them.
+    // javascript-sdk: (1e20 | 0) === 1661992960 and (4294967297 | 0) === 1.
+    REQUIRE(holdout.seedHi == 1661992960);
     REQUIRE(holdout.seedLo == 1);
+
+    const auto fractional = json::parse(R"({"id": 11, "seedHi": 1.5, "seedLo": -1.5})").get<HoldoutData>();
+    REQUIRE(fractional.seedHi == 1);
+    REQUIRE(fractional.seedLo == -1);
 
     const auto wrapped = json::parse(R"({"id": 11, "seedHi": 4294967295, "seedLo": -1.0, "iteration": 2.5})")
                              .get<HoldoutData>();
     REQUIRE(wrapped.seedHi == -1);
     REQUIRE(wrapped.seedLo == -1);
     REQUIRE(wrapped.iteration == 0);
+}
+
+TEST_CASE("Holdout arms: only a 3-arm split gives arm 1 its full-on-only meaning", "[holdouts][arms]") {
+    // javascript-sdk, java-sdk and the collector compare the arm count to 3 exactly: in a 4-arm
+    // holdout arm 1 holds nothing out.
+    auto holdout = new_holdout(21, "holdout_four_arm", 0, 1);
+    holdout.split = {0.25, 0.25, 0.25, 0.25};
+    Context context(config_with(UID), data_of({holdout}, {covered_by(new_experiment(1, "exp_four_arm"), {21})}));
+
+    REQUIRE(context.treatment("exp_four_arm") == NORMAL_VARIANT);
+    require_published(context, {own_exposure(1, "exp_four_arm", NORMAL_VARIANT), holdout_exposure(21, "holdout_four_arm", 1)});
 }
