@@ -129,7 +129,8 @@ inline bool get_int(const nlohmann::json& j, int& out) {
     }
     if (j.is_number_float()) {
         const double value = j.get<double>();
-        if (!(value >= INT32_MIN && value <= INT32_MAX) || static_cast<double>(static_cast<int>(value)) != value) {
+        if (!(value >= INT32_MIN && value <= INT32_MAX) ||
+            std::islessgreater(static_cast<double>(static_cast<int>(value)), value)) {
             return false;
         }
         out = static_cast<int>(value);
@@ -138,29 +139,32 @@ inline bool get_int(const nlohmann::json& j, int& out) {
     return false;
 }
 
-// A seed as JS reads it (ECMAScript ToInt32): truncated toward zero and wrapped to
-// 32 bits, so 4294967297 reads as 1 and 1e20 as 1661992960.
+// A seed as JS reads it (ECMAScript ToInt32 of a JSON number, which JS holds as a
+// double): truncated toward zero and wrapped to 32 bits, so 4294967297 reads as 1
+// and 1e20 as 1661992960.
+inline int32_t to_int32(double d) {
+    if (!std::isfinite(d)) return 0;
+    double wrapped = std::fmod(std::trunc(d), 4294967296.0);
+    if (wrapped < 0) wrapped += 4294967296.0;
+    return static_cast<int32_t>(static_cast<uint32_t>(wrapped));
+}
+
 inline bool get_seed(const nlohmann::json& j, int32_t& out) {
+    if (!j.is_number()) return false;
+    // Exact for integers within 2^53; larger ones round to a double first, as in JS.
     if (j.is_number_unsigned()) {
-        out = static_cast<int32_t>(static_cast<uint32_t>(j.get<uint64_t>()));
-        return true;
+        const auto value = j.get<uint64_t>();
+        out = value <= (1ULL << 53) ? static_cast<int32_t>(static_cast<uint32_t>(value))
+                                    : to_int32(static_cast<double>(value));
+    } else if (j.is_number_integer()) {
+        const auto value = j.get<int64_t>();
+        out = (value <= (1LL << 53) && value >= -(1LL << 53))
+                  ? static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(value)))
+                  : to_int32(static_cast<double>(value));
+    } else {
+        out = to_int32(j.get<double>());
     }
-    if (j.is_number_integer()) {
-        out = static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(j.get<int64_t>())));
-        return true;
-    }
-    if (j.is_number_float()) {
-        const double d = j.get<double>();
-        if (!std::isfinite(d)) {
-            out = 0;
-            return true;
-        }
-        double wrapped = std::fmod(std::trunc(d), 4294967296.0);
-        if (wrapped < 0) wrapped += 4294967296.0;
-        out = static_cast<int32_t>(static_cast<uint32_t>(wrapped));
-        return true;
-    }
-    return false;
+    return true;
 }
 
 } // namespace detail

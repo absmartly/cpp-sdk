@@ -1705,6 +1705,18 @@ TEST_CASE("Holdouts: an out-of-range or non-integral iteration keeps its default
     REQUIRE(fractional.seedHi == 1);
     REQUIRE(fractional.seedLo == -1);
 
+    // Negative values wrap rather than clamp: (-4294967297 | 0) === -1, (-2147483649 | 0) === 2147483647.
+    const auto negative = json::parse(R"({"id": 11, "seedHi": -4294967297, "seedLo": -2147483649})").get<HoldoutData>();
+    REQUIRE(negative.seedHi == -1);
+    REQUIRE(negative.seedLo == 2147483647);
+
+    // Beyond 2^53 JS holds the integer as a rounded double first:
+    // (9007199254740995 | 0) === 4 and (18446744073709551615 | 0) === 0.
+    const auto huge = json::parse(R"({"id": 11, "seedHi": 9007199254740995, "seedLo": 18446744073709551615})")
+                          .get<HoldoutData>();
+    REQUIRE(huge.seedHi == 4);
+    REQUIRE(huge.seedLo == 0);
+
     const auto wrapped = json::parse(R"({"id": 11, "seedHi": 4294967295, "seedLo": -1.0, "iteration": 2.5})")
                              .get<HoldoutData>();
     REQUIRE(wrapped.seedHi == -1);

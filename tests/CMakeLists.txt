@@ -28,3 +28,10 @@ include(CTest)
 include(Catch)
 catch_discover_tests(absmartly_tests)
 target_compile_definitions(absmartly_tests PRIVATE ABSMARTLY_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+
+# Public headers stay clean under strict consumer warnings.
+add_library(absmartly_public_headers_check OBJECT public_headers_check.cpp)
+target_link_libraries(absmartly_public_headers_check PRIVATE absmartly-sdk)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(absmartly_public_headers_check PRIVATE -Wfloat-equal -Werror)
+endif()
