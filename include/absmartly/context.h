@@ -10,6 +10,7 @@
 #include <absmartly/hashing.h>
 #include <nlohmann/json.hpp>
 #include <map>
+#include <utility>
 #include <set>
 #include <vector>
 #include <string>
@@ -18,6 +19,27 @@
 #include <future>
 
 namespace absmartly {
+
+// A unit's arm in one holdout, cached per (holdout id, unit type) while the
+// holdout's iteration is unchanged. The arm count is pinned with the arm: arm 1
+// means something else in a 2-arm and a 3-arm holdout.
+struct HoldoutAssignment {
+    int id = 0;
+    int iteration = 0;
+    std::string unit_type;
+    int variant = 0;
+    size_t arm_count = 0;
+    bool exposed = false;
+};
+
+// A holdout covering an experiment, as it was when the assignment was resolved.
+// `assignment` is null when the experiment's unit was missing.
+struct HoldoutPin {
+    int id = 0;
+    int iteration = 0;
+    std::string name;
+    std::shared_ptr<HoldoutAssignment> assignment;
+};
 
 struct Assignment {
     int id = 0;
@@ -49,6 +71,11 @@ struct Assignment {
     std::map<std::string, nlohmann::json> variables;
     bool has_variables = false;
     int attrs_seq = 0;
+    // An applicable holdout holds the unit out: variant 0, no exposure of its own.
+    bool suppressed = false;
+    // The holdouts covering the experiment when this was resolved, in id order;
+    // null when there are none. Exposures fire from these, never re-resolved.
+    std::shared_ptr<const std::vector<HoldoutPin>> holdouts;
 };
 
 struct ExperimentIndex {
@@ -56,6 +83,8 @@ struct ExperimentIndex {
     std::vector<std::map<std::string, nlohmann::json>> variables;
     // data->assignmentRules parsed once; null when there are none or they are invalid.
     nlohmann::json assignment_rules;
+    // data->holdoutIds resolved against the usable holdouts, sorted by id and unique.
+    std::vector<const HoldoutData*> holdouts; // Non-owning, like data.
 };
 
 struct RuleResolution {
@@ -129,6 +158,10 @@ public:
 private:
     Assignment& get_or_create_assignment(const std::string& experiment_name);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
+    void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
+    void queue_holdout_exposure(const std::string& holdout_name, const HoldoutAssignment& assignment);
+    std::shared_ptr<HoldoutAssignment> get_holdout_assignment(const HoldoutData& holdout, const std::string& unit_type);
+    static bool holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment);
 
     void build_index();
 
@@ -194,6 +227,11 @@ private:
     std::future<ContextData> data_future_;
 
     AudienceMatcher audience_matcher_;
+
+    // Holdouts with a non-empty split, by id; non-owning pointers into data_.
+    std::map<int, const HoldoutData*> holdouts_by_id_;
+    // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
+    std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
 };
 
 } // namespace absmartly

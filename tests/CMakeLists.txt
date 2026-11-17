@@ -16,6 +16,7 @@ add_executable(absmartly_tests
   context_test.cpp
   system_attributes_test.cpp
   assignment_rules_test.cpp
+  holdouts_test.cpp
   http_integration_test.cpp
 )
 
@@ -26,3 +27,4 @@ target_compile_definitions(absmartly_tests PRIVATE ABSMARTLY_PROJECT_VERSION="${
 include(CTest)
 include(Catch)
 catch_discover_tests(absmartly_tests)
+target_compile_definitions(absmartly_tests PRIVATE ABSMARTLY_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")

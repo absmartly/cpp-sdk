@@ -1,0 +1,77 @@
+{
+	"experiments": [
+		{
+			"id": 1,
+			"name": "exp_covered",
+			"iteration": 1,
+			"unitType": "session_id",
+			"seedHi": 100,
+			"seedLo": 200,
+			"split": [0.5, 0.5],
+			"trafficSeedHi": 1,
+			"trafficSeedLo": 2,
+			"trafficSplit": [0.0, 1.0],
+			"fullOnVariant": 0,
+			"variants": [{"name": "A", "config": null}, {"name": "B", "config": null}],
+			"audience": null,
+			"holdoutIds": [12, 11],
+			"holdoutType": "future_type",
+			"futureExperimentScalar": 1,
+			"futureExperimentObject": {"nested": [1, 2]},
+			"futureExperimentArray": [{"a": 1}]
+		},
+		{
+			"id": 2,
+			"name": "exp_uncovered",
+			"iteration": 1,
+			"unitType": "session_id",
+			"seedHi": 100,
+			"seedLo": 200,
+			"split": [0.5, 0.5],
+			"trafficSeedHi": 1,
+			"trafficSeedLo": 2,
+			"trafficSplit": [0.0, 1.0],
+			"fullOnVariant": 0,
+			"variants": [{"name": "A", "config": null}, {"name": "B", "config": null}],
+			"audience": null,
+			"futureHoldoutLink": {"ids": [11]}
+		}
+	],
+	"holdouts": [
+		{
+			"id": 11,
+			"name": "holdout_future",
+			"iteration": 1,
+			"unitType": "session_id",
+			"seedHi": 13,
+			"seedLo": 111,
+			"split": [0.1, 0.9],
+			"trafficSeedHi": 0,
+			"trafficSeedLo": 0,
+			"trafficSplit": [0.0, 1.0],
+			"fullOnVariant": 0,
+			"variants": [{"name": "A", "config": null}, {"name": "B", "config": null}],
+			"audience": null,
+			"holdoutType": "full",
+			"futureHoldoutScalar": "x",
+			"futureHoldoutNumber": 3.5,
+			"futureHoldoutObject": {"schedule": {"startAt": 0, "periodMs": 60000}},
+			"futureHoldoutArray": [1, "two", {"three": 3}, [4]],
+			"switchbackClusters": {"user_id": "/country"}
+		},
+		{
+			"id": 12,
+			"name": "holdout_slim",
+			"iteration": 1,
+			"unitType": "session_id",
+			"seedHi": 1,
+			"seedLo": 222,
+			"split": [0.1, 0.9],
+			"futureNull": null,
+			"futureBool": true
+		}
+	],
+	"futureRootScalar": 7,
+	"futureRootObject": {"holdouts": []},
+	"futureRootArray": [null]
+}

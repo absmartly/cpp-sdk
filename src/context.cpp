@@ -14,6 +14,15 @@ static int64_t now_millis() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
 }
 
+// Arm 0 always holds the unit out. In a 3-arm holdout, arm 1 holds it out only of
+// covered experiments that are not full-on. The arity is the split's length, never
+// holdoutType (javascript-sdk isHeldOutBy).
+static bool is_held_out_by(int holdout_variant, size_t holdout_arm_count, int full_on_variant) {
+    if (holdout_variant == 0) return true;
+    if (holdout_arm_count == 3 && holdout_variant == 1) return full_on_variant == 0;
+    return false;
+}
+
 template <typename T>
 static void prepend_all(std::vector<T>& queue, std::vector<T>& items) {
     queue.insert(queue.begin(),
@@ -155,13 +164,20 @@ void Context::set_unit(const std::string& unit_type, const nlohmann::json& uid) 
 }
 
 void Context::invalidate_assignments_pinned_with_missing_unit(const std::string& unit_type) {
-    // A split rule that matched without its unit gave the full-on variant. With the unit
-    // now set it is re-randomised, but only while unexposed: rebuilding an exposed one
-    // would queue a second, conflicting exposure.
+    // A split rule that matched without its unit gave the full-on variant, and a holdout
+    // could not be resolved without it (a null pin). With the unit now set the assignment
+    // is resolved again, but only while unexposed: rebuilding an exposed one would queue a
+    // second, conflicting exposure.
     for (auto it = assignments_.begin(); it != assignments_.end();) {
         const auto& assignment = it->second;
-        if (assignment.rule_override && assignment.rule_missing_unit && !assignment.exposed &&
-            assignment.unit_type == unit_type) {
+        bool missing_holdout = false;
+        if (assignment.holdouts) {
+            for (const auto& pin : *assignment.holdouts) {
+                missing_holdout = missing_holdout || !pin.assignment;
+            }
+        }
+        if ((missing_holdout || (assignment.rule_override && assignment.rule_missing_unit)) &&
+            !assignment.exposed && assignment.unit_type == unit_type) {
             it = assignments_.erase(it);
         } else {
             ++it;
@@ -280,7 +296,7 @@ int Context::treatment(const std::string& experiment_name) {
 
     if (!assignment.exposed) {
         assignment.exposed = true;
-        queue_exposure(experiment_name, assignment);
+        trigger_exposures(experiment_name, assignment);
     }
 
     return assignment.variant;
@@ -301,6 +317,11 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         return default_value;
     }
 
+    // A held-out unit reads the control value, not the caller's default, when nothing
+    // else wins. The first suppressed candidate is kept even if it lacks the key, so a
+    // later one cannot win (javascript-sdk _resolveVariableValue).
+    const std::map<std::string, nlohmann::json>* suppressed_fallback = nullptr;
+
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name);
@@ -308,13 +329,25 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         if (assignment.has_variables) {
             if (!assignment.exposed) {
                 assignment.exposed = true;
-                queue_exposure(experiment_name, assignment);
+                trigger_exposures(experiment_name, assignment);
             }
 
             if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
                 assignment.variables.count(key) > 0) {
                 return assignment.variables.at(key);
             }
+
+            if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
+                suppressed_fallback == nullptr) {
+                suppressed_fallback = &assignment.variables;
+            }
+        }
+    }
+
+    if (suppressed_fallback != nullptr) {
+        auto it = suppressed_fallback->find(key);
+        if (it != suppressed_fallback->end()) {
+            return it->second;
         }
     }
 
@@ -329,14 +362,29 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
         return default_value;
     }
 
+    const std::map<std::string, nlohmann::json>* suppressed_fallback = nullptr;
+
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name);
 
-        if (assignment.has_variables &&
-            (assignment.assigned || assignment.overridden || assignment.rule_override) &&
-            assignment.variables.count(key) > 0) {
-            return assignment.variables.at(key);
+        if (assignment.has_variables) {
+            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
+                assignment.variables.count(key) > 0) {
+                return assignment.variables.at(key);
+            }
+
+            if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
+                suppressed_fallback == nullptr) {
+                suppressed_fallback = &assignment.variables;
+            }
+        }
+    }
+
+    if (suppressed_fallback != nullptr) {
+        auto it = suppressed_fallback->find(key);
+        if (it != suppressed_fallback->end()) {
+            return it->second;
         }
     }
 
@@ -612,7 +660,8 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
-            if (existing.overridden && existing.variant == overrides_[experiment_name]) {
+            if (existing.overridden && existing.variant == overrides_[experiment_name] &&
+                (experiment == nullptr || holdouts_match(*experiment, existing))) {
                 return existing;
             }
         } else if (experiment == nullptr) {
@@ -620,11 +669,13 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
             if (!existing.assigned && !existing.rule_override) {
                 return existing;
             }
-        } else if (existing.rule_override || !has_custom || cassignments_[experiment_name] == existing.variant) {
-            // A matching rule wins over a custom assignment, so a custom mismatch is not
-            // staleness for a rule-won assignment; treating it as stale rebuilt the
-            // assignment (and re-queued its exposure) on every call.
+        } else if (existing.suppressed || existing.rule_override || !has_custom ||
+                   cassignments_[experiment_name] == existing.variant) {
+            // A suppressed assignment is forced to variant 0 and a matching rule wins over a
+            // custom assignment, so a custom mismatch is not staleness for either; treating it
+            // as stale rebuilt the assignment (and re-queued its exposure) on every call.
             if (experiment_matches(*experiment->data, existing) &&
+                holdouts_match(*experiment, existing) &&
                 rule_matches(*experiment, existing) &&
                 audience_matches(*experiment->data, existing)) {
                 // Both checks ran against the current attributes; advance the sequence
@@ -636,6 +687,30 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     }
 
     Assignment assignment;
+
+    // Resolved for overrides too: an override wins, but the holdouts still fire.
+    if (experiment != nullptr && !experiment->holdouts.empty()) {
+        const std::string& unit_type = experiment->data->unitType;
+        auto pins = std::make_shared<std::vector<HoldoutPin>>();
+        pins->reserve(experiment->holdouts.size());
+        for (const auto* holdout : experiment->holdouts) {
+            HoldoutPin pin;
+            pin.id = holdout->id;
+            pin.iteration = holdout->iteration;
+            pin.name = holdout->name;
+            // The covered experiment's unit type, never the holdout's own.
+            if (!unit_type.empty()) {
+                pin.assignment = get_holdout_assignment(*holdout, unit_type);
+            }
+            if (pin.assignment &&
+                is_held_out_by(pin.assignment->variant, pin.assignment->arm_count,
+                               experiment->data->fullOnVariant)) {
+                assignment.suppressed = true;
+            }
+            pins->push_back(std::move(pin));
+        }
+        assignment.holdouts = std::move(pins);
+    }
 
     if (has_override) {
         if (experiment != nullptr) {
@@ -659,6 +734,10 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
                 assignment.rule_override = true;
                 assignment.rule_missing_unit = rule->missing_unit;
                 assignment.variant = rule->variant;
+            } else if (assignment.suppressed) {
+                // Held out: control, unassigned. Audience, full-on, traffic and custom
+                // assignment are not consulted, so a holdout beats all of them.
+                assignment.variant = 0;
             } else {
                 if (!exp_data.audience.is_null()) {
                     std::string audience_str;
@@ -740,6 +819,86 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     return assignments_[experiment_name];
 }
 
+void Context::trigger_exposures(const std::string& experiment_name, const Assignment& assignment) {
+    // Held by value: a re-entrant event logger may replace this assignment.
+    const auto holdouts = assignment.holdouts;
+
+    // A suppressed experiment publishes no exposure of its own; the holdouts record it.
+    if (!assignment.suppressed || assignment.overridden || assignment.rule_override) {
+        queue_exposure(experiment_name, assignment);
+    }
+
+    // The pins from the decision, not a live re-resolution, so a refresh between the
+    // decision and here cannot publish a holdout exposure from another iteration.
+    if (holdouts) {
+        for (const auto& pin : *holdouts) {
+            if (pin.assignment && !pin.assignment->exposed) {
+                pin.assignment->exposed = true;
+                queue_holdout_exposure(pin.name, *pin.assignment);
+            }
+        }
+    }
+}
+
+void Context::queue_holdout_exposure(const std::string& holdout_name, const HoldoutAssignment& assignment) {
+    Assignment exposed;
+    exposed.id = assignment.id;
+    exposed.unit_type = assignment.unit_type;
+    exposed.variant = assignment.variant;
+    exposed.assigned = true;
+    exposed.eligible = true;
+    queue_exposure(holdout_name, exposed);
+}
+
+std::shared_ptr<HoldoutAssignment> Context::get_holdout_assignment(const HoldoutData& holdout,
+                                                                  const std::string& unit_type) {
+    // Valid while the iteration is unchanged: a same-iteration seed or split edit neither
+    // re-randomises nor re-exposes the unit.
+    auto key = std::make_pair(holdout.id, unit_type);
+    auto it = holdout_assignments_.find(key);
+    if (it != holdout_assignments_.end() && it->second->iteration == holdout.iteration) {
+        return it->second;
+    }
+
+    // Never cached when the unit is missing: it can still be set later.
+    if (units_.count(unit_type) == 0) {
+        return nullptr;
+    }
+    const std::string hashed = unit_hash(unit_type);
+    if (hashed.empty()) {
+        return nullptr;
+    }
+
+    auto assigner_it = assigners_.find(unit_type);
+    if (assigner_it == assigners_.end()) {
+        assigner_it = assigners_.emplace(unit_type, VariantAssigner(hashed)).first;
+    }
+
+    auto assignment = std::make_shared<HoldoutAssignment>();
+    assignment->id = holdout.id;
+    assignment->iteration = holdout.iteration;
+    assignment->unit_type = unit_type;
+    assignment->variant = assigner_it->second.assign(holdout.split, holdout.seedHi, holdout.seedLo);
+    assignment->arm_count = holdout.split.size();
+    holdout_assignments_[std::move(key)] = assignment;
+    return assignment;
+}
+
+bool Context::holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment) {
+    // (id, iteration) only: a seed, split or name edit must not force a second exposure.
+    const size_t pinned = assignment.holdouts ? assignment.holdouts->size() : 0;
+    if (experiment.holdouts.size() != pinned) {
+        return false;
+    }
+    for (size_t i = 0; i < pinned; ++i) {
+        const auto& pin = (*assignment.holdouts)[i];
+        if (experiment.holdouts[i]->id != pin.id || experiment.holdouts[i]->iteration != pin.iteration) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void Context::queue_exposure(const std::string& experiment_name, const Assignment& assignment) {
     Exposure exposure;
     exposure.id = assignment.id;
@@ -770,10 +929,31 @@ void Context::build_index() {
     ++data_seq_;
     index_.clear();
     index_variables_.clear();
+    holdouts_by_id_.clear();
+
+    // A holdout without a split cannot be assigned, so it covers nothing.
+    for (const auto& holdout : data_.holdouts) {
+        if (!holdout.split.empty()) {
+            holdouts_by_id_[holdout.id] = &holdout;
+        }
+    }
 
     for (const auto& exp : data_.experiments) {
         ExperimentIndex entry;
         entry.data = &exp;
+
+        // Dangling ids are ignored and duplicates collapse, as in javascript-sdk.
+        for (int holdout_id : exp.holdoutIds) {
+            auto holdout_it = holdouts_by_id_.find(holdout_id);
+            if (holdout_it == holdouts_by_id_.end()) {
+                continue;
+            }
+            auto pos = std::lower_bound(entry.holdouts.begin(), entry.holdouts.end(), holdout_id,
+                [](const HoldoutData* existing, int id) { return existing->id < id; });
+            if (pos == entry.holdouts.end() || (*pos)->id != holdout_id) {
+                entry.holdouts.insert(pos, holdout_it->second);
+            }
+        }
 
         // A value that is not a JSON object, like an object without a "rules" array,
         // means no rules for this experiment. No error event: JS and Java only log it,

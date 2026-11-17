@@ -1,5 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <climits>
 #include <string>
 #include <vector>
 #include <map>
@@ -69,6 +71,11 @@ struct ExperimentData {
     // JSON string of ordered assignment rules ({"rules": [...]}); empty when the
     // experiment has none. A value sent as anything but a string is ignored.
     std::string assignmentRules;
+    // Ids of the holdouts covering this experiment, resolved against
+    // ContextData::holdouts; an id with no usable holdout is ignored.
+    std::vector<int> holdoutIds;
+    // Carried for wire fidelity only: a holdout's arm count comes from its split.
+    std::string holdoutType;
 };
 
 inline void to_json(nlohmann::json& j, const ExperimentData& e) {
@@ -95,7 +102,42 @@ inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     if (!e.assignmentRules.empty()) {
         j["assignmentRules"] = e.assignmentRules;
     }
+    if (!e.holdoutIds.empty()) {
+        j["holdoutIds"] = e.holdoutIds;
+    }
+    if (!e.holdoutType.empty()) {
+        j["holdoutType"] = e.holdoutType;
+    }
 }
+
+namespace detail {
+
+// A JSON integer (or integral float) that fits an int, as JS reads a holdout id.
+inline bool get_int(const nlohmann::json& j, int& out) {
+    if (j.is_number_integer()) {
+        if (j.is_number_unsigned()) {
+            const auto value = j.get<uint64_t>();
+            if (value > static_cast<uint64_t>(INT32_MAX)) return false;
+            out = static_cast<int>(value);
+            return true;
+        }
+        const auto value = j.get<int64_t>();
+        if (value < INT32_MIN || value > INT32_MAX) return false;
+        out = static_cast<int>(value);
+        return true;
+    }
+    if (j.is_number_float()) {
+        const double value = j.get<double>();
+        if (!(value >= INT32_MIN && value <= INT32_MAX) || static_cast<double>(static_cast<int>(value)) != value) {
+            return false;
+        }
+        out = static_cast<int>(value);
+        return true;
+    }
+    return false;
+}
+
+} // namespace detail
 
 inline void from_json(const nlohmann::json& j, ExperimentData& e) {
     j.at("id").get_to(e.id);
@@ -148,18 +190,106 @@ inline void from_json(const nlohmann::json& j, ExperimentData& e) {
     if (j.contains("assignmentRules") && j["assignmentRules"].is_string()) {
         j.at("assignmentRules").get_to(e.assignmentRules);
     }
+    if (j.contains("holdoutIds") && j["holdoutIds"].is_array()) {
+        for (const auto& id : j["holdoutIds"]) {
+            int value = 0;
+            if (detail::get_int(id, value)) {
+                e.holdoutIds.push_back(value);
+            }
+        }
+    }
+    if (j.contains("holdoutType") && j["holdoutType"].is_string()) {
+        j.at("holdoutType").get_to(e.holdoutType);
+    }
+}
+
+// A holdout: a randomisation over the units of the experiments that list its id
+// in holdoutIds. Arm 0 holds the unit out of every covered experiment; in a
+// 3-arm holdout, arm 1 holds it out of covered experiments that are not full-on.
+struct HoldoutData {
+    int id = 0;
+    std::string name;
+    std::string unitType;
+    int iteration = 0;
+    int32_t seedHi = 0;
+    int32_t seedLo = 0;
+    std::vector<double> split;
+    std::string holdoutType;
+};
+
+inline void to_json(nlohmann::json& j, const HoldoutData& h) {
+    j = nlohmann::json{
+        {"id", h.id},
+        {"name", h.name},
+        {"unitType", h.unitType},
+        {"iteration", h.iteration},
+        {"seedHi", h.seedHi},
+        {"seedLo", h.seedLo},
+        {"split", h.split}
+    };
+    if (!h.holdoutType.empty()) {
+        j["holdoutType"] = h.holdoutType;
+    }
+}
+
+// Only the id is required; other fields keep their defaults when absent or of
+// another type, and unknown fields are ignored.
+inline void from_json(const nlohmann::json& j, HoldoutData& h) {
+    if (!j.is_object() || !j.contains("id") || !detail::get_int(j["id"], h.id)) {
+        throw nlohmann::json::type_error::create(302, "holdout without an integer id", &j);
+    }
+    if (j.contains("name") && j["name"].is_string()) {
+        j.at("name").get_to(h.name);
+    }
+    if (j.contains("unitType") && j["unitType"].is_string()) {
+        j.at("unitType").get_to(h.unitType);
+    }
+    if (j.contains("iteration") && j["iteration"].is_number()) {
+        j.at("iteration").get_to(h.iteration);
+    }
+    if (j.contains("seedHi") && j["seedHi"].is_number()) {
+        j.at("seedHi").get_to(h.seedHi);
+    }
+    if (j.contains("seedLo") && j["seedLo"].is_number()) {
+        j.at("seedLo").get_to(h.seedLo);
+    }
+    if (j.contains("split") && j["split"].is_array()) {
+        const auto& split = j["split"];
+        if (std::all_of(split.begin(), split.end(), [](const nlohmann::json& v) { return v.is_number(); })) {
+            split.get_to(h.split);
+        }
+    }
+    if (j.contains("holdoutType") && j["holdoutType"].is_string()) {
+        j.at("holdoutType").get_to(h.holdoutType);
+    }
 }
 
 struct ContextData {
     std::vector<ExperimentData> experiments;
+    std::vector<HoldoutData> holdouts;
 };
 
 inline void to_json(nlohmann::json& j, const ContextData& c) {
     j = nlohmann::json{{"experiments", c.experiments}};
+    if (!c.holdouts.empty()) {
+        j["holdouts"] = c.holdouts;
+    }
 }
 
 inline void from_json(const nlohmann::json& j, ContextData& c) {
     j.at("experiments").get_to(c.experiments);
+    // A malformed holdout entry is skipped on its own; it never fails the context.
+    if (j.contains("holdouts") && j["holdouts"].is_array()) {
+        for (const auto& entry : j["holdouts"]) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            try {
+                c.holdouts.push_back(entry.get<HoldoutData>());
+            } catch (const nlohmann::json::exception&) {
+            }
+        }
+    }
 }
 
 struct Exposure {
