@@ -4,9 +4,23 @@
 #include <absmartly/hashing.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <new>
 #include <sstream>
+
+// Counts heap allocations so tests can pin the cost of the holdout paths.
+static std::atomic<long> g_allocations{0};
+
+void* operator new(std::size_t size) {
+    ++g_allocations;
+    if (void* p = std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace absmartly;
 using json = nlohmann::json;
@@ -1623,4 +1637,72 @@ TEST_CASE("Holdouts: the first suppressed candidate decides a variable's fallbac
     Context keyless_first(config_with(UID), data_of({holdout}, {keyless, second}));
     REQUIRE(keyless_first.peek_variable_value("color", "default") == "default");
     REQUIRE(keyless_first.variable_value("color", "default") == "default");
+}
+
+// --- Cost ---------------------------------------------------------------------------------------
+
+namespace {
+
+template <typename F>
+long allocations_of(F&& f) {
+    const long before = g_allocations.load();
+    f();
+    return g_allocations.load() - before;
+}
+
+} // namespace
+
+TEST_CASE("Holdouts: cached reads of a held-out assignment with a custom assignment allocate nothing",
+          "[holdouts][cache][cost]") {
+    // A custom assignment never applies to a held-out unit, so it is not staleness: the cached
+    // assignment is reused rather than rebuilt on every read.
+    auto config = config_with(UID);
+    config.custom_assignments["exp_holdout_custom_cache"] = 3;
+    Context context(config, data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)},
+                                    {covered_by(new_experiment(1, "exp_holdout_custom_cache"), {11})}));
+    const std::string name = "exp_holdout_custom_cache";
+
+    REQUIRE(context.treatment(name) == 0);
+    REQUIRE(allocations_of([&] {
+                for (int i = 0; i < 10; ++i) {
+                    context.treatment(name);
+                    context.peek(name);
+                }
+            }) == 0);
+}
+
+TEST_CASE("Holdouts: an uncovered experiment resolves without holdout bookkeeping", "[holdouts][cost]") {
+    // Measured against an experiment missing from the payload, which builds an empty assignment.
+    // An uncovered experiment adds 2 allocations on main (1.0.0) and here, in a payload with no
+    // holdouts and in one whose holdouts cover other experiments.
+    const auto extra_cost = [](const ContextData& data) {
+        Context context(config_with(UID), data);
+        context.peek("warm_up"); // hashes the unit and creates its assigner
+        const std::string plain = "exp_plain";
+        const std::string missing = "exp_missing";
+        return allocations_of([&] { context.peek(plain); }) - allocations_of([&] { context.peek(missing); });
+    };
+    const auto plain = new_experiment(1, "exp_plain");
+    const auto warm_up = new_experiment(2, "warm_up");
+    const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+
+    REQUIRE(extra_cost(data_of({}, {plain, warm_up})) == 2);
+    REQUIRE(extra_cost(data_of({holdout}, {plain, covered_by(warm_up, {11})})) == 2);
+    // Covering it adds its holdout pins.
+    REQUIRE(extra_cost(data_of({holdout}, {covered_by(plain, {11}), warm_up})) > 2);
+}
+
+TEST_CASE("Holdouts: out-of-range or non-integral holdout numbers keep their defaults", "[holdouts][json]") {
+    const auto holdout = json::parse(R"({"id": 11, "iteration": 1e20, "seedHi": 1e20, "seedLo": 4294967297,
+                                         "split": [0.1, 0.9]})").get<HoldoutData>();
+    REQUIRE(holdout.iteration == 0);
+    REQUIRE(holdout.seedHi == 0);
+    // Seeds wrap to their low 32 bits, as JS reads them.
+    REQUIRE(holdout.seedLo == 1);
+
+    const auto wrapped = json::parse(R"({"id": 11, "seedHi": 4294967295, "seedLo": -1.0, "iteration": 2.5})")
+                             .get<HoldoutData>();
+    REQUIRE(wrapped.seedHi == -1);
+    REQUIRE(wrapped.seedLo == -1);
+    REQUIRE(wrapped.iteration == 0);
 }

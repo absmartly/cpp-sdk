@@ -137,6 +137,26 @@ inline bool get_int(const nlohmann::json& j, int& out) {
     return false;
 }
 
+// A seed as JS reads it: an integer (or integral float) wrapped to its low 32 bits.
+inline bool get_seed(const nlohmann::json& j, int32_t& out) {
+    int64_t value = 0;
+    if (j.is_number_unsigned()) {
+        value = static_cast<int64_t>(j.get<uint64_t>());
+    } else if (j.is_number_integer()) {
+        value = j.get<int64_t>();
+    } else if (j.is_number_float()) {
+        const double d = j.get<double>();
+        if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0) || static_cast<double>(static_cast<int64_t>(d)) != d) {
+            return false;
+        }
+        value = static_cast<int64_t>(d);
+    } else {
+        return false;
+    }
+    out = static_cast<int32_t>(static_cast<uint32_t>(static_cast<uint64_t>(value) & 0xffffffffu));
+    return true;
+}
+
 } // namespace detail
 
 inline void from_json(const nlohmann::json& j, ExperimentData& e) {
@@ -232,8 +252,9 @@ inline void to_json(nlohmann::json& j, const HoldoutData& h) {
     }
 }
 
-// Only the id is required; other fields keep their defaults when absent or of
-// another type, and unknown fields are ignored.
+// Only the id is required; other fields keep their defaults when absent, of
+// another type or out of range, and unknown fields are ignored. A missing name
+// publishes "" (the Collector always sends one).
 inline void from_json(const nlohmann::json& j, HoldoutData& h) {
     if (!j.is_object() || !j.contains("id") || !detail::get_int(j["id"], h.id)) {
         throw nlohmann::json::type_error::create(302, "holdout without an integer id", &j);
@@ -244,14 +265,14 @@ inline void from_json(const nlohmann::json& j, HoldoutData& h) {
     if (j.contains("unitType") && j["unitType"].is_string()) {
         j.at("unitType").get_to(h.unitType);
     }
-    if (j.contains("iteration") && j["iteration"].is_number()) {
-        j.at("iteration").get_to(h.iteration);
+    if (j.contains("iteration")) {
+        detail::get_int(j["iteration"], h.iteration);
     }
-    if (j.contains("seedHi") && j["seedHi"].is_number()) {
-        j.at("seedHi").get_to(h.seedHi);
+    if (j.contains("seedHi")) {
+        detail::get_seed(j["seedHi"], h.seedHi);
     }
-    if (j.contains("seedLo") && j["seedLo"].is_number()) {
-        j.at("seedLo").get_to(h.seedLo);
+    if (j.contains("seedLo")) {
+        detail::get_seed(j["seedLo"], h.seedLo);
     }
     if (j.contains("split") && j["split"].is_array()) {
         const auto& split = j["split"];
