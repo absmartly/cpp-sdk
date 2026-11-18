@@ -38,9 +38,13 @@ struct SwitchbackIndex {
     std::optional<int64_t> start_at;
     std::optional<int64_t> period_ms;
     std::string design_type;
-    bool legacy = true;
-    std::vector<std::string> source_types;
-    std::vector<SwitchbackPath> source_paths;
+    // A linked unit type and the attribute path it reads, in served order.
+    struct Source {
+        std::string type;
+        SwitchbackPath path;
+    };
+    // Empty for the legacy path: no cluster map, or one with an unreadable entry.
+    std::vector<Source> sources;
     bool servable = false;
     int64_t seed = 0;
     int arm_count = 0;

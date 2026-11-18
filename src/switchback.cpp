@@ -194,11 +194,11 @@ bool SwitchbackIndex::same_identity(const SwitchbackIndex& previous) const {
     return id == previous.id && iteration == previous.iteration && clusters == previous.clusters &&
            cluster_values == previous.cluster_values && start_at == previous.start_at &&
            period_ms == previous.period_ms && design_type == previous.design_type &&
-           ((!legacy && !previous.legacy) || unit_type == previous.unit_type);
+           ((!sources.empty() && !previous.sources.empty()) || unit_type == previous.unit_type);
 }
 
 int64_t SwitchbackIndex::period(int64_t now) const {
-    if (legacy || !servable || now < *start_at) {
+    if (sources.empty() || !servable || now < *start_at) {
         return NO_SWITCHBACK_PERIOD;
     }
     return floor_div(now - *start_at, *period_ms);
@@ -221,23 +221,17 @@ SwitchbackIndex make_switchback_index(const ExperimentData& experiment) {
     index.design_type = experiment.switchbackDesignType;
 
     const auto& clusters = experiment.switchbackClusters;
-    if (clusters.is_object() && !clusters.empty()) {
-        index.legacy = false;
+    if (clusters.is_object()) {
         for (auto it = clusters.begin(); it != clusters.end(); ++it) {
             std::optional<SwitchbackPath> path;
             if (it.value().is_string()) {
                 path = SwitchbackPath::parse_supported(it.value().get_ref<const std::string&>());
             }
             if (!path.has_value()) {
-                index.legacy = true;
+                index.sources.clear();
                 break;
             }
-            index.source_types.push_back(it.key());
-            index.source_paths.push_back(std::move(*path));
-        }
-        if (index.legacy) {
-            index.source_types.clear();
-            index.source_paths.clear();
+            index.sources.push_back({it.key(), std::move(*path)});
         }
     }
 
