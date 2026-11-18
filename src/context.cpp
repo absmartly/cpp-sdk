@@ -311,11 +311,6 @@ int Context::peek(const std::string& experiment_name) {
 
 nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
     check_ready(true);
-    return resolve_variable_value(key, default_value, true);
-}
-
-nlohmann::json Context::resolve_variable_value(const std::string& key, const nlohmann::json& default_value,
-                                               bool retry_on_refresh) {
 
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
@@ -328,22 +323,43 @@ nlohmann::json Context::resolve_variable_value(const std::string& key, const nlo
     bool has_suppressed_fallback = false;
     std::optional<nlohmann::json> suppressed_fallback;
 
-    const int data_seq = data_seq_;
-    for (const auto* experiment_index : var_it->second) {
-        const std::string& experiment_name = experiment_index->data->name;
-        auto& assignment = get_or_create_assignment(experiment_name);
+    // An exposure runs the event logger, which may refresh the context and replace the
+    // index walked here. Before the first exposure the remaining candidates' names are
+    // captured, and the walk goes on over them, resolved against the live data, as JS
+    // walks the candidate list it started with. Cached reads expose nothing and copy
+    // nothing.
+    const auto& candidates = var_it->second;
+    std::vector<std::string> remaining;
+    bool captured = false;
+    size_t next = 0;
+
+    for (size_t i = 0;; ++i) {
+        const std::string* name = nullptr;
+        if (!captured) {
+            if (i >= candidates.size()) break;
+            name = &candidates[i]->data->name;
+        } else {
+            if (next >= remaining.size()) break;
+            name = &remaining[next++];
+        }
+
+        auto& assignment = get_or_create_assignment(*name);
 
         if (assignment.has_variables) {
             if (!assignment.exposed) {
-                assignment.exposed = true;
-                trigger_exposures(experiment_name, assignment);
-                // An event logger that refreshed the context has replaced the index this
-                // loop walks; resolve once more against the new data. A second refresh
-                // during that pass ends the lookup with the default, so a logger that
-                // refreshes on every exposure cannot recurse without bound.
-                if (data_seq_ != data_seq) {
-                    return retry_on_refresh ? resolve_variable_value(key, default_value, false) : default_value;
+                if (!captured) {
+                    // The current name is copied too, since a refresh may free the index
+                    // entry that owns it; the walk resumes after it.
+                    remaining.reserve(candidates.size() - i);
+                    for (size_t k = i; k < candidates.size(); ++k) {
+                        remaining.push_back(candidates[k]->data->name);
+                    }
+                    name = &remaining.front();
+                    next = 1;
+                    captured = true;
                 }
+                assignment.exposed = true;
+                trigger_exposures(*name, assignment);
             }
 
             if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
@@ -675,12 +691,8 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
-            // A covered override also compares the unit type its holdout pins were resolved
-            // with. Without holdouts the override is kept across a unit type change, as in JS.
             if (existing.overridden && existing.variant == overrides_[experiment_name] &&
-                (experiment == nullptr ||
-                 (holdouts_match(*experiment, existing) &&
-                  (!existing.holdouts || existing.unit_type == experiment->data->unitType)))) {
+                (experiment == nullptr || holdouts_match(*experiment, existing))) {
                 return existing;
             }
         } else if (experiment == nullptr) {

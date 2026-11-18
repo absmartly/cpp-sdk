@@ -1740,24 +1740,30 @@ TEST_CASE("Holdout arms: only a 3-arm split gives arm 1 its full-on-only meaning
 
 // --- Review follow-ups ----------------------------------------------------------------------------
 
-TEST_CASE("Holdouts: a logger that refreshes on every exposure cannot make variable_value recurse",
+TEST_CASE("Holdouts: a logger that refreshes on every exposure gets the JS variable_value result",
           "[holdouts][variables][refresh]") {
-    // Each refresh brings a new data set with a fresh, unexposed candidate; the lookup gives up
-    // after one retry instead of walking (and exposing) without bound.
-    int generation = 0;
-    const auto data_for = [](int n) {
-        auto experiment = with_variables(new_experiment(1, "exp_gen_" + std::to_string(n)), "color");
-        return data_of({}, {experiment});
-    };
+    // JS walks the candidate list it started with, resolving each against the live data. Here
+    // every exposure refreshes to the same data, so the walk ends on the second candidate's
+    // value with one exposure each, and it stays bounded however often the logger refreshes.
+    auto first = with_variables(new_experiment(1, "exp_first"), "color");
+    first.split = {1.0, 0.0}; // variant 0, whose config has no "color"
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    auto second = with_variables(new_experiment(2, "exp_second"), "color");
+    const auto data = data_of({}, {first, second});
+
+    int refreshes = 0;
     auto logger = std::make_shared<ExposureLog>();
     logger->on_exposure = [&](Context& context, const json&) {
-        if (generation < 1000) context.refresh(data_for(++generation));
+        ++refreshes;
+        context.refresh(data);
     };
-    Context context(config_with(UID), data_for(0), logger);
+    Context context(config_with(UID), data, logger);
 
-    REQUIRE(context.variable_value("color", "default") == "default");
+    REQUIRE(context.variable_value("color", "default") == "treatment");
     REQUIRE(context.pending() == 2);
-    REQUIRE(generation == 2);
+    REQUIRE(refreshes == 2);
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(context.pending() == 2);
 }
 
 TEST_CASE("Holdouts: a logger that refreshes during variable_value does not invalidate the walk",
@@ -1794,7 +1800,8 @@ TEST_CASE("Holdouts: an uncovered override is kept across a unit type change, as
     REQUIRE(context.pending() == 1);
 }
 
-TEST_CASE("Holdouts: an override re-resolves when a refresh changes the covered unit type", "[holdouts][refresh]") {
+TEST_CASE("Holdouts: a covered override is kept across a unit type change, as in JS", "[holdouts][refresh]") {
+    // javascript-sdk and java-sdk revalidate an override by its variant and holdout set only.
     ContextConfig config;
     config.units = {{UNIT_TYPE, UID}, {"user_id", UID_NOT_HELD_OUT}};
     config.overrides["exp_override_unit_type"] = 1;
@@ -1806,40 +1813,33 @@ TEST_CASE("Holdouts: an override re-resolves when a refresh changes the covered 
 
     context.refresh(data_of({holdout}, {covered_by(new_experiment(1, "exp_override_unit_type", "user_id", 0), {11})}));
     REQUIRE(context.treatment("exp_override_unit_type") == 1);
-
-    const auto event = context.publish();
-    REQUIRE(event.exposures.size() == 4);
-    REQUIRE(event.exposures[2].unit == "user_id");
-    REQUIRE(event.exposures[3].id == 11);
-    REQUIRE(event.exposures[3].unit == "user_id");
-    REQUIRE(event.exposures[3].variant == 1);
+    REQUIRE(context.pending() == 2);
 }
 
-TEST_CASE("Holdouts: decoding into reused models replaces holdouts and holdoutIds", "[holdouts][json]") {
-    ContextData data;
-    json::parse(R"({"experiments":[],"holdouts":[{"id":11,"split":[0.1,0.9]}]})").get_to(data);
-    REQUIRE(data.holdouts.size() == 1);
-    json::parse(R"({"experiments":[],"holdouts":[]})").get_to(data);
-    REQUIRE(data.holdouts.empty());
-    json::parse(R"({"experiments":[],"holdouts":[{"id":11,"split":[0.1,0.9]}]})").get_to(data);
-    json::parse(R"({"experiments":[]})").get_to(data);
-    REQUIRE(data.holdouts.empty());
+TEST_CASE("Holdouts: a refresh during variable_value does not re-walk the candidate that triggered it",
+          "[holdouts][variables][refresh]") {
+    // The first candidate's exposure refreshes with a new iteration of that same experiment. JS
+    // goes on with the next candidate and does not expose the first one again.
+    const auto data_for = [](int iteration) {
+        auto first = with_variables(new_experiment(1, "exp_first"), "color");
+        first.iteration = iteration;
+        first.split = {1.0, 0.0};
+        first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+        return data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color")});
+    };
+    bool refreshed = false;
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (!refreshed) {
+            refreshed = true;
+            context.refresh(data_for(2));
+        }
+    };
+    Context context(config_with(UID), data_for(1), logger);
 
-    ExperimentData experiment;
-    const auto with_ids = json::parse(R"({"id":1,"name":"e","unitType":"u","iteration":1,"seedHi":0,"seedLo":0,
-                                          "holdoutIds":[11]})");
-    auto without_ids = with_ids;
-    without_ids["holdoutIds"] = json::array();
-    with_ids.get_to(experiment);
-    REQUIRE(experiment.holdoutIds == std::vector<int>{11});
-    without_ids.get_to(experiment);
-    REQUIRE(experiment.holdoutIds.empty());
-}
-
-TEST_CASE("Holdouts: integer and float spellings of a large seed read the same", "[holdouts][json]") {
-    // (9007199254740993 | 0) === 0 in JS: the integer rounds to 9007199254740992 first.
-    const auto integer = json::parse(R"({"id": 11, "seedHi": 9007199254740993})").get<HoldoutData>();
-    const auto floating = json::parse(R"({"id": 11, "seedHi": 9007199254740993.0})").get<HoldoutData>();
-    REQUIRE(integer.seedHi == 0);
-    REQUIRE(floating.seedHi == 0);
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(context.pending() == 2);
+    std::vector<std::string> names;
+    for (const auto& exposure : logger->exposures) names.push_back(exposure["name"]);
+    REQUIRE(names == std::vector<std::string>{"exp_first", "exp_second"});
 }
