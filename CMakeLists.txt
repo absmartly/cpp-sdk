@@ -19,6 +19,9 @@ add_library(absmartly-sdk
   src/variant_assigner.cpp
   src/utils.cpp
   src/context.cpp
+  src/clock.cpp
+  src/switchback.cpp
+  src/context_switchback.cpp
   src/client.cpp
   src/default_context_data_provider.cpp
   src/default_context_publisher.cpp

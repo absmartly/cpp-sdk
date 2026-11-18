@@ -1,5 +1,7 @@
 #include "absmartly/context.h"
 #include "absmartly/errors.h"
+#include "clock.h"
+#include "switchback_state.h"
 
 #include <algorithm>
 #include <charconv>
@@ -9,10 +11,7 @@
 
 namespace absmartly {
 
-static int64_t now_millis() {
-    auto now = std::chrono::system_clock::now();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-}
+using internal::now_millis;
 
 // Arm 0 always holds the unit out. In a 3-arm holdout, arm 1 holds it out only of
 // covered experiments that are not full-on. The arity is the split's length, never
@@ -161,6 +160,7 @@ void Context::set_unit(const std::string& unit_type, const nlohmann::json& uid) 
     check_not_finalized();
     store_unit(unit_type, uid);
     invalidate_assignments_pinned_with_missing_unit(unit_type);
+    invalidate_absent_switchbacks();
 }
 
 void Context::invalidate_assignments_pinned_with_missing_unit(const std::string& unit_type) {
@@ -291,12 +291,14 @@ void Context::set_custom_assignments(const std::map<std::string, int>& assignmen
 
 int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
+    const internal::SwitchbackCallGuard guard(switchbacks_.get());
 
-    auto& assignment = get_or_create_assignment(experiment_name);
+    std::optional<int64_t> now;
+    auto& assignment = get_or_create_assignment(experiment_name, now);
 
     if (!assignment.exposed) {
         assignment.exposed = true;
-        trigger_exposures(experiment_name, assignment);
+        expose(experiment_name, assignment, now);
     }
 
     return assignment.variant;
@@ -305,7 +307,8 @@ int Context::treatment(const std::string& experiment_name) {
 int Context::peek(const std::string& experiment_name) {
     check_ready(true);
 
-    auto& assignment = get_or_create_assignment(experiment_name);
+    std::optional<int64_t> now;
+    auto& assignment = get_or_create_assignment(experiment_name, now);
     return assignment.variant;
 }
 
@@ -316,6 +319,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
     if (var_it == index_variables_.end()) {
         return default_value;
     }
+    const internal::SwitchbackCallGuard guard(switchbacks_.get());
 
     // A held-out unit reads the control value, not the caller's default, when nothing
     // else wins. The first suppressed candidate is kept even if it lacks the key, so a
@@ -333,6 +337,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
     bool captured = false;
     size_t next = 0;
 
+    std::optional<int64_t> now;
     for (size_t i = 0;; ++i) {
         const std::string* name = nullptr;
         if (!captured) {
@@ -343,10 +348,13 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             name = &remaining[next++];
         }
 
-        auto& assignment = get_or_create_assignment(*name);
+        auto& assignment = get_or_create_assignment(*name, now);
 
         if (assignment.has_variables) {
-            if (!assignment.exposed) {
+            // Like java-sdk, a switchback that is not assigned (a strict audience mismatch) gives
+            // way on a variable key without recording an exposure.
+            if (!assignment.exposed && (!assignment.switchback || assignment.assigned ||
+                                        assignment.overridden || assignment.rule_override)) {
                 if (!captured) {
                     // The current name is copied too, since a refresh may free the index
                     // entry that owns it; the walk resumes after it.
@@ -359,7 +367,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
                     captured = true;
                 }
                 assignment.exposed = true;
-                trigger_exposures(*name, assignment);
+                expose(*name, assignment, now);
             }
 
             if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
@@ -395,9 +403,10 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
 
     const std::map<std::string, nlohmann::json>* suppressed_fallback = nullptr;
 
+    std::optional<int64_t> now;
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
-        auto& assignment = get_or_create_assignment(experiment_name);
+        auto& assignment = get_or_create_assignment(experiment_name, now);
 
         if (assignment.has_variables) {
             if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
@@ -948,12 +957,17 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
 }
 
 nlohmann::json Context::enqueue_exposure(const std::string& experiment_name, const Assignment& assignment) {
+    return enqueue_exposure(experiment_name, assignment, now_millis());
+}
+
+nlohmann::json Context::enqueue_exposure(const std::string& experiment_name, const Assignment& assignment,
+                                         int64_t exposed_at) {
     Exposure exposure;
     exposure.id = assignment.id;
     exposure.name = experiment_name;
     exposure.unit = assignment.unit_type;
     exposure.variant = assignment.variant;
-    exposure.exposedAt = now_millis();
+    exposure.exposedAt = exposed_at;
     exposure.assigned = assignment.assigned;
     exposure.eligible = assignment.eligible;
     exposure.overridden = assignment.overridden;
@@ -974,6 +988,13 @@ nlohmann::json Context::enqueue_exposure(const std::string& experiment_name, con
 }
 
 void Context::build_index() {
+    // The switchback definitions being replaced, so an unchanged one keeps its slots.
+    std::map<std::string, std::shared_ptr<internal::SwitchbackIndex>> previous;
+    if (switchbacks_) {
+        for (const auto& [name, entry] : index_) {
+            if (entry.switchback) previous.emplace(name, entry.switchback);
+        }
+    }
     ++data_seq_;
     index_.clear();
     index_variables_.clear();
@@ -1044,6 +1065,8 @@ void Context::build_index() {
         index_[exp.name] = std::move(entry);
     }
 
+    index_switchbacks(previous);
+
     for (auto& [exp_name, entry] : index_) {
         for (const auto& var_map : entry.variables) {
             for (const auto& [key, _] : var_map) {
@@ -1067,6 +1090,11 @@ bool Context::experiment_matches(const ExperimentData& experiment, const Assignm
 }
 
 std::optional<RuleResolution> Context::resolve_rule(const ExperimentIndex& experiment, bool unit_pinned_missing) {
+    return resolve_rule(experiment, experiment.data->unitType, unit_pinned_missing);
+}
+
+std::optional<RuleResolution> Context::resolve_rule(const ExperimentIndex& experiment, const std::string& unit_type,
+                                                   bool unit_pinned_missing) {
     if (experiment.assignment_rules.is_null()) {
         return std::nullopt;
     }
@@ -1093,7 +1121,6 @@ std::optional<RuleResolution> Context::resolve_rule(const ExperimentIndex& exper
 
     // Without the unit there is nothing to randomise over: the experiment's own no-unit
     // result applies (the full-on variant, or 0 when it is not full-on).
-    const std::string& unit_type = data.unitType;
     std::string hashed;
     if (!unit_type.empty() && !unit_pinned_missing && units_.count(unit_type) > 0) {
         hashed = unit_hash(unit_type);
@@ -1128,7 +1155,9 @@ bool Context::rule_matches(const ExperimentIndex& experiment, Assignment& assign
     // An exposed split resolved without its unit keeps resolving as if the unit were
     // still missing, so a unit set afterwards cannot switch the variant the user saw.
     const bool unit_pinned_missing = assignment.exposed && assignment.rule_missing_unit;
-    auto rule = resolve_rule(experiment, unit_pinned_missing);
+    // A switchback's split rule randomises over the unit that serves it.
+    const std::string& unit_type = experiment.switchback ? assignment.unit_type : experiment.data->unitType;
+    auto rule = resolve_rule(experiment, unit_type, unit_pinned_missing);
 
     if (rule.has_value() != assignment.rule_override ||
         (rule.has_value() && rule->variant != assignment.variant)) {

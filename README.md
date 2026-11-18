@@ -458,6 +458,62 @@ in the Web Console and arrive with the context data
 
 Payloads without holdouts behave exactly as before.
 
+### Switchback Experiments
+
+A switchback experiment is randomised over *clusters* and time: a cluster is
+the value of a context attribute (a store's region, say), and the cluster's
+variant changes on a fixed time grid. Every unit in a cluster sees the same
+variant within a period. The SDK serves the same contract as the Collector, so
+given the same context data, units, attributes and clock it picks the same
+variant and the same exposure unit. Switchbacks arrive with the context data
+(`ExperimentData::randomizationType == "switchback"` and the `switchback*`
+fields); there is nothing to call.
+
+- `switchbackClusters` maps a unit type to an attribute path, in the served
+  order, and that order decides which unit serves. Decode payloads you fetch
+  yourself with `nlohmann::ordered_json` (the SDK's own client does), since
+  `nlohmann::json` sorts object keys:
+
+  ```cpp
+  absmartly::ContextData data = nlohmann::ordered_json::parse(json_response)
+      .get<absmartly::ContextData>();
+  ```
+
+- For each linked unit type set on the context, in that order, the SDK reads
+  the attribute at the path (`/` separates segments, a quoted segment is a
+  literal key, an integer segment indexes an array; a `.` anywhere makes the
+  path unreadable). Only attributes set with `set_attribute()` are read; the
+  latest one set at or before the call wins. The first unit that gives a value
+  serves, and the value is the cluster key. A non-empty string is used as-is,
+  a JSON integer becomes its base-10 text; every floating-point number
+  (`3.0` included), boolean, object, array, empty string and null gives no
+  value. Set an integer cluster value as an integer, not a double.
+- No linked unit set: the experiment does not apply (variant 0, no exposure).
+  No value, two units that disagree, or a value outside
+  `switchbackClusterValues`: variant 0 and no exposure; only an override still
+  applies.
+- Otherwise the precedence is: override, assignment rule (a `split` rule
+  randomises the serving unit), strict audience mismatch, full-on, then the
+  schedule. Before `switchbackStartAt`, or with an unservable schedule (an
+  anchor that is not hour-aligned, a period that is not positive, fewer than two
+  arms), the result is variant 0 with no exposure. A traffic miss on the serving
+  unit is recorded as ineligible, then a custom assignment, then the draw for
+  the period `floor((now - switchbackStartAt) / switchbackPeriodMs)`.
+- Holdouts never apply to a switchback.
+- One exposure per experiment and period, under the serving unit, stamped with
+  the time that chose the period. The cluster is read once per period: a
+  `set_attribute()` later in the period takes effect in the next one. A refresh
+  that changes the cluster map, the allowed values, the grid or the design
+  starts over; changes to the burn-in, burn-out, carryover and estimand fields
+  do not. The exposure and publish payloads carry no new fields, and attributes
+  are still published with their timestamps.
+- `assign_switchback()` and `switchback_permutation()`
+  (`absmartly/switchback.h`) expose the platform's draw.
+
+Payloads without switchbacks behave exactly as before. SDKs that predate this
+feature serve a sticky unit assignment for a switchback (or nothing), which does
+not match the schedule; upgrade every SDK that serves one.
+
 ### Semantic Version Operators
 
 Audience filters and rule conditions can compare versions with `semver_eq`,
