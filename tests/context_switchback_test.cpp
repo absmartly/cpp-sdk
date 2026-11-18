@@ -1285,3 +1285,39 @@ TEST_CASE("Switchback: a logger that refreshes in a first switchback mid-call do
         REQUIRE(context->pending() == 2);
     }
 }
+
+TEST_CASE("Switchback: a slot a logger drops mid-call is parked until the call returns", "[switchback][context][reentrancy]") {
+    ClockScope clock(ANCHOR + 5);
+    auto unit = as_unit(switchback(2, HOUR));
+    auto logger = std::make_shared<ExposureLog>();
+    size_t parked_during_call = 0;
+    bool refreshed = false;
+    logger->on_exposure = [&](Context& context) {
+        if (refreshed) return;
+        refreshed = true;
+        // The switchback becomes a unit experiment: its slot (still held by the caller) is dropped.
+        context.refresh(data_of({unit}));
+        parked_during_call = ContextTestAccess::retired_slots(context);
+    };
+    SECTION("treatment") {
+        auto context = create(data_of({switchback(2, HOUR)}), units({{UNIT_TYPE, UID}}), logger);
+        REQUIRE(context->treatment("exp_sb") == EXPECTED_2_ARMS[0]);
+        REQUIRE(parked_during_call == 1);
+        REQUIRE(ContextTestAccess::retired_slots(*context) == 0);
+    }
+    SECTION("variable_value") {
+        auto context = create(data_of({switchback(2, HOUR)}), units({{UNIT_TYPE, UID}}), logger);
+        REQUIRE(context->variable_value("sb.arm", -1) == EXPECTED_2_ARMS[0]);
+        REQUIRE(parked_during_call == 1);
+        REQUIRE(ContextTestAccess::retired_slots(*context) == 0);
+    }
+}
+
+TEST_CASE("Switchback: a slot dropped outside any call is freed at once", "[switchback][context][reentrancy]") {
+    ClockScope clock(ANCHOR + 5);
+    auto context = create(data_of({switchback(2, HOUR)}));
+    REQUIRE(context->treatment("exp_sb") == EXPECTED_2_ARMS[0]);
+    context->refresh(data_of({as_unit(switchback(2, HOUR))}));
+    REQUIRE(ContextTestAccess::switchback_slots(*context) == 0);
+    REQUIRE(ContextTestAccess::retired_slots(*context) == 0);
+}

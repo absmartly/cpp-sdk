@@ -138,6 +138,10 @@ struct ContextTestAccess {
         return n;
     }
     static bool has_switchback_state(Context& context) { return context.switchbacks_ != nullptr; }
+    // Slots dropped while a call was in progress, parked until the outermost call returns.
+    static size_t retired_slots(Context& context) {
+        return context.switchbacks_ ? context.switchbacks_->retired.size() : 0;
+    }
 };
 
 } // namespace absmartly::internal
