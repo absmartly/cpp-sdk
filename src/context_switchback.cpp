@@ -39,7 +39,11 @@ std::string audience_string(const nlohmann::json& audience) {
 void Context::index_switchbacks(const std::map<std::string, std::shared_ptr<SwitchbackIndex>>& previous) {
     for (auto& [name, entry] : index_) {
         if (!is_switchback(*entry.data)) continue;
-        if (!switchbacks_) switchbacks_ = std::make_shared<SwitchbackState>();
+        if (!switchbacks_) {
+            switchbacks_ = std::make_shared<SwitchbackState>();
+            // A load from inside a call (an event logger's refresh) joins that call.
+            switchbacks_->in_call = call_depth_ > 0;
+        }
         auto index = std::make_shared<SwitchbackIndex>(internal::make_switchback_index(*entry.data));
         // An unchanged identity keeps its generation, and so its slots; anything else, including a
         // definition that was removed or a unit experiment in the previous load, starts a new one.
@@ -48,20 +52,38 @@ void Context::index_switchbacks(const std::map<std::string, std::shared_ptr<Swit
                                 ? it->second->generation
                                 : ++switchbacks_->generation_counter;
         entry.switchback = std::move(index);
+        // An assignment cached while this was a unit experiment is never reused.
+        const auto stale = assignments_.find(name);
+        if (stale != assignments_.end()) {
+            if (switchbacks_->in_call) {
+                switchbacks_->retired_assignments.push_back(assignments_.extract(stale));
+            } else {
+                assignments_.erase(stale);
+            }
+        }
+    }
+    if (!switchbacks_) return;
+    // A switchback that is now a unit experiment, or gone, drops its slots.
+    for (auto epoch = switchbacks_->epochs.begin(); epoch != switchbacks_->epochs.end();) {
+        const auto entry = index_.find(epoch->first);
+        if (entry != index_.end() && entry->second.switchback) {
+            ++epoch;
+            continue;
+        }
+        const auto next = std::next(epoch);
+        drop_switchback_epoch(epoch->first);
+        epoch = next;
     }
 }
 
 Assignment& Context::get_or_create_assignment(const std::string& experiment_name, std::optional<int64_t>& now) {
-    if (switchbacks_) {
-        const auto it = index_.find(experiment_name);
-        if (it != index_.end() && it->second.switchback) {
-            if (!now) now = internal::now_millis();
-            return switchback_assignment(experiment_name, it->second, *now);
-        }
-        // No longer a switchback, or removed: its slots go now, lazily, as in java-sdk.
-        if (!switchbacks_->epochs.empty()) drop_switchback_epoch(experiment_name);
+    const auto it = index_.find(experiment_name);
+    const ExperimentIndex* experiment = it != index_.end() ? &it->second : nullptr;
+    if (experiment != nullptr && experiment->switchback) {
+        if (!now) now = internal::now_millis();
+        return switchback_assignment(experiment_name, *experiment, *now);
     }
-    return get_or_create_assignment(experiment_name);
+    return get_or_create_assignment(experiment_name, experiment);
 }
 
 void Context::drop_switchback_epoch(const std::string& experiment_name) {
@@ -83,8 +105,9 @@ void Context::invalidate_absent_switchbacks() {
         for (auto it = slots.begin(); it != slots.end();) {
             const auto& slot = it->second;
             const auto next = std::next(it);
+            // An exposed override is kept: it already published, and the override still wins.
             if (slot.serving.status == SwitchbackServing::Status::Absent &&
-                (!slot.assignment.overridden || !slot.assignment.exposed)) {
+                !(slot.assignment.overridden && slot.assignment.exposed)) {
                 switchbacks_->drop(slots, it);
             }
             it = next;
@@ -152,16 +175,6 @@ Assignment& Context::switchback_assignment(const std::string& experiment_name, c
     const auto& switchback = *experiment.switchback;
     const auto& data = *experiment.data;
     const int64_t period = switchback.period(now);
-
-    // An assignment cached while this was a unit experiment is not reused if it becomes one again.
-    const auto stale = assignments_.find(experiment_name);
-    if (stale != assignments_.end()) {
-        if (switchbacks_->depth > 0) {
-            switchbacks_->retired_assignments.push_back(assignments_.extract(stale));
-        } else {
-            assignments_.erase(stale);
-        }
-    }
 
     auto& epoch = switchbacks_->epochs[experiment_name];
     if (epoch.generation != switchback.generation) {

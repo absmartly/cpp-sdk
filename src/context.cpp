@@ -291,7 +291,7 @@ void Context::set_custom_assignments(const std::map<std::string, int>& assignmen
 
 int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
-    const internal::SwitchbackCallGuard guard(switchbacks_.get());
+    const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
 
     std::optional<int64_t> now;
     auto& assignment = get_or_create_assignment(experiment_name, now);
@@ -319,7 +319,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
     if (var_it == index_variables_.end()) {
         return default_value;
     }
-    const internal::SwitchbackCallGuard guard(switchbacks_.get());
+    const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
 
     // A held-out unit reads the control value, not the caller's default, when nothing
     // else wins. The first suppressed candidate is kept even if it lacks the key, so a
@@ -690,11 +690,9 @@ void Context::refresh(const ContextData& new_data) {
     emit_event("refresh", refresh_data);
 }
 
-Assignment& Context::get_or_create_assignment(const std::string& experiment_name) {
+Assignment& Context::get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment) {
     bool has_custom = cassignments_.count(experiment_name) > 0;
     bool has_override = overrides_.count(experiment_name) > 0;
-    auto exp_it = index_.find(experiment_name);
-    const ExperimentIndex* experiment = (exp_it != index_.end()) ? &exp_it->second : nullptr;
 
     auto ass_it = assignments_.find(experiment_name);
     if (ass_it != assignments_.end()) {

@@ -206,7 +206,9 @@ TEST_CASE("Switchback: an anchor off the hour or out of range is unservable", "[
         experiment.switchbackStartAt = start_at;
         TestClock::now = 0;
         auto context = create(data_of({experiment}));
-        for (int64_t now : {int64_t{0}, ANCHOR, ANCHOR + 2 * HOUR + 1, start_at, start_at + HOUR, max_anchor + DAY}) {
+        // start_at + HOUR saturates: INT64_MAX - (INT64_MAX % HOUR) + HOUR would overflow.
+        const int64_t after = start_at > INT64_MAX - HOUR ? INT64_MAX : start_at + HOUR;
+        for (int64_t now : {int64_t{0}, ANCHOR, ANCHOR + 2 * HOUR + 1, start_at, after, max_anchor + DAY}) {
             TestClock::now = now;
             REQUIRE(context->treatment("exp_sb") == 0);
             REQUIRE(context->variable_value("sb.arm", -1) == 0);
@@ -1171,5 +1173,115 @@ TEST_CASE("Switchback: each analysis-only field alone keeps the epoch", "[switch
         context->refresh(data_of({edited}));
         REQUIRE(context->treatment("exp_sb") == EXPECTED_2_ARMS[0]);
         REQUIRE(context->pending() == 1);
+    }
+}
+
+// Ports of the independent review's kill tests: each pins a contract a mutant got past.
+TEST_CASE("Switchback: a traffic miss beats a custom assignment", "[switchback][context][precedence]") {
+    ClockScope clock(ANCHOR + 5);
+    auto experiment = switchback(2, HOUR);
+    experiment.trafficSplit = {1.0, 0.0};
+    auto context = create(data_of({experiment}));
+    context->set_custom_assignment("exp_sb", 1);
+    REQUIRE(context->treatment("exp_sb") == 0);
+    REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", 0, ANCHOR + 5, {true, false})}));
+}
+
+TEST_CASE("Switchback: a rule that starts matching mid-period applies in that period", "[switchback][context][rules]") {
+    ClockScope clock(ANCHOR + 5);
+    auto experiment = switchback(2, HOUR);
+    experiment.assignmentRules = R"({"rules":[{"type":"assign","environments":[],"variant":1,)"
+                                 R"("conditions":{"and":[{"eq":[{"var":"tier"},{"value":"gold"}]}]}}]})";
+    auto context = create(data_of({experiment}));
+    REQUIRE(EXPECTED_2_ARMS[0] == 0);
+    REQUIRE(context->treatment("exp_sb") == 0);
+    context->set_attribute("tier", "gold");
+    REQUIRE(context->treatment("exp_sb") == 1);
+    REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", 0, ANCHOR + 5),
+                                               store_exposure(1, "exp_sb", 1, ANCHOR + 5, RULE)}));
+}
+
+TEST_CASE("Switchback: a custom assignment set mid-period applies in that period", "[switchback][context][precedence]") {
+    ClockScope clock(ANCHOR + 5);
+    auto context = create(data_of({switchback(2, HOUR)}));
+    REQUIRE(context->treatment("exp_sb") == 0);
+    context->set_custom_assignment("exp_sb", 1);
+    REQUIRE(context->treatment("exp_sb") == 1);
+    REQUIRE(context->pending() == 2);
+}
+
+TEST_CASE("Switchback: an exposed override without a linked unit survives set_unit", "[switchback][context]") {
+    ClockScope clock(ANCHOR + 5);
+    auto context = create(data_of({switchback(2, HOUR)}), units({{"user_id", "u1"}}));
+    context->set_override("exp_sb", 1);
+    REQUIRE(context->treatment("exp_sb") == 1);
+    context->set_unit(UNIT_TYPE, UID);
+    REQUIRE(context->treatment("exp_sb") == 1);
+    REQUIRE(context->pending() == 1);
+}
+
+TEST_CASE("Switchback: a full-on refresh in the same period applies", "[switchback][context][refresh]") {
+    ClockScope clock(ANCHOR + 5);
+    auto context = create(data_of({switchback(2, HOUR)}));
+    REQUIRE(context->treatment("exp_sb") == 0);
+    auto full_on = switchback(2, HOUR);
+    full_on.fullOnVariant = 1;
+    context->refresh(data_of({full_on}));
+    REQUIRE(context->treatment("exp_sb") == 1);
+    REQUIRE(context->pending() == 2);
+}
+
+TEST_CASE("Switchback: unit, switchback, unit again re-resolves every time", "[switchback][context][refresh]") {
+    ClockScope clock(ANCHOR + 5);
+    auto unit = switchback(2, HOUR);
+    unit.randomizationType = "unit";
+    auto context = create(data_of({unit}));
+    context->treatment("exp_sb");
+    context->refresh(data_of({switchback(2, HOUR)}));
+    context->treatment("exp_sb");
+    REQUIRE(ContextTestAccess::switchback_slots(*context) == 1);
+    context->refresh(data_of({unit}));
+    // The switchback's slots go with the definition.
+    REQUIRE(ContextTestAccess::switchback_slots(*context) == 0);
+    context->treatment("exp_sb");
+    REQUIRE(context->pending() == 3);
+}
+
+TEST_CASE("Switchback: an integer allow-list entry admits the integer cluster", "[switchback][context][values]") {
+    ClockScope clock(ANCHOR + HOUR + 5);
+    auto payload = json(switchback(2, HOUR));
+    payload["switchbackClusterValues"] = json::array({42});
+    auto experiment = payload.get<ExperimentData>();
+    experiment.switchbackClusters = clusters({{UNIT_TYPE, "n"}});
+    REQUIRE(experiment.switchbackClusterValues == std::vector<std::string>{"42"});
+    auto context = create(data_of({experiment}));
+    context->set_attribute("n", 42);
+    REQUIRE(context->treatment("exp_sb") == assign_switchback("42", 1, SEED, 2));
+    REQUIRE(context->pending() == 1);
+}
+
+TEST_CASE("Switchback: a logger that refreshes in a first switchback mid-call does not free the call's assignment",
+          "[switchback][context][reentrancy]") {
+    ClockScope clock(ANCHOR + 5);
+    auto unit = as_unit(switchback(2, HOUR));
+    auto logger = std::make_shared<ExposureLog>();
+    bool refreshed = false;
+    logger->on_exposure = [&](Context& context) {
+        if (refreshed) return;
+        refreshed = true;
+        context.refresh(data_of({switchback(2, HOUR)}));
+        REQUIRE(context.treatment("exp_sb") == EXPECTED_2_ARMS[0]);
+    };
+    SECTION("treatment") {
+        auto context = create(data_of({unit}), units({{UNIT_TYPE, UID}}), logger);
+        const int variant = context->treatment("exp_sb");
+        REQUIRE((variant == 0 || variant == 1));
+        REQUIRE(context->pending() == 2);
+    }
+    SECTION("variable_value") {
+        auto context = create(data_of({unit}), units({{UNIT_TYPE, UID}}), logger);
+        const json value = context->variable_value("sb.arm", -1);
+        REQUIRE((value == 0 || value == 1));
+        REQUIRE(context->pending() == 2);
     }
 }

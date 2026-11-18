@@ -108,7 +108,7 @@ inline ContextConfig units(std::initializer_list<std::pair<const char*, json>> e
 
 } // namespace sbtest
 
-namespace absmartly {
+namespace absmartly::internal {
 
 // Test seam: the slot a switchback resolves to at the clock's current reading (java-sdk
 // switchbackResolutionForTest).
@@ -140,4 +140,8 @@ struct ContextTestAccess {
     static bool has_switchback_state(Context& context) { return context.switchbacks_ != nullptr; }
 };
 
-} // namespace absmartly
+} // namespace absmartly::internal
+
+namespace sbtest {
+using absmartly::internal::ContextTestAccess;
+} // namespace sbtest

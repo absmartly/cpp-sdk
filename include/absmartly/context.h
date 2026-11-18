@@ -24,6 +24,7 @@ namespace internal {
 struct SwitchbackIndex;
 struct SwitchbackSlot;
 struct SwitchbackState;
+struct ContextTestAccess;
 } // namespace internal
 
 // A unit's arm in one holdout, cached per (holdout id, unit type) while the
@@ -164,7 +165,7 @@ public:
     void refresh(const ContextData& new_data);
 
 private:
-    Assignment& get_or_create_assignment(const std::string& experiment_name);
+    Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
     void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
     nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment);
@@ -255,10 +256,13 @@ private:
     void index_switchbacks(const std::map<std::string, std::shared_ptr<internal::SwitchbackIndex>>& previous);
     void drop_switchback_epoch(const std::string& experiment_name);
     void invalidate_absent_switchbacks();
-    friend struct ContextTestAccess;
+    // The SDK's own tests only (tests/switchback_support.h); not API.
+    friend struct internal::ContextTestAccess;
 
     // Null until the first data load that has a switchback.
     std::shared_ptr<internal::SwitchbackState> switchbacks_;
+    // treatment() and variable_value() calls in progress, re-entrant ones included.
+    int call_depth_ = 0;
 };
 
 } // namespace absmartly

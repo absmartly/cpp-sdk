@@ -4,6 +4,7 @@
 #include "switchback_internal.h"
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -44,15 +45,15 @@ struct SwitchbackState {
 
     std::map<std::string, Epoch, std::less<>> epochs;
     uint64_t generation_counter = 0;
-    // treatment() and variable_value() calls in progress. Each holds a slot across the event
-    // logger, which may call back in and drop it, so a slot dropped meanwhile is parked in
-    // retired until the outermost call returns.
-    int depth = 0;
+    // Set while a treatment() or variable_value() call is in progress (Context's call depth). Each
+    // holds an assignment across the event logger, which may call back in and drop it, so one
+    // dropped meanwhile is parked in retired until the outermost call returns.
+    bool in_call = false;
     std::vector<Slots::node_type> retired;
     std::vector<std::map<std::string, Assignment>::node_type> retired_assignments;
 
     void drop(Slots& slots, Slots::iterator it) {
-        if (depth > 0) {
+        if (in_call) {
             retired.push_back(slots.extract(it));
         } else {
             slots.erase(it);
@@ -60,14 +61,18 @@ struct SwitchbackState {
     }
 };
 
-// Counts a public call in progress for SwitchbackState::depth.
+// Counts a treatment() or variable_value() call in progress. The count lives on the Context,
+// so a call that starts before the first switchback is loaded (a logger may refresh one in) is
+// counted too.
 class SwitchbackCallGuard {
 public:
-    explicit SwitchbackCallGuard(SwitchbackState* state) : state_(state) {
-        if (state_) ++state_->depth;
+    SwitchbackCallGuard(int& depth, const std::shared_ptr<SwitchbackState>& state) : depth_(depth), state_(state) {
+        ++depth_;
+        if (state_) state_->in_call = true;
     }
     ~SwitchbackCallGuard() {
-        if (state_ && --state_->depth == 0) {
+        if (--depth_ == 0 && state_) {
+            state_->in_call = false;
             state_->retired.clear();
             state_->retired_assignments.clear();
         }
@@ -76,7 +81,8 @@ public:
     SwitchbackCallGuard& operator=(const SwitchbackCallGuard&) = delete;
 
 private:
-    SwitchbackState* state_;
+    int& depth_;
+    const std::shared_ptr<SwitchbackState>& state_;
 };
 
 } // namespace absmartly::internal

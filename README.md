@@ -150,7 +150,7 @@ int main() {
 int main() {
     std::string json_response = fetch_context_data(); // your HTTP client
 
-    absmartly::ContextData data = nlohmann::json::parse(json_response)
+    absmartly::ContextData data = nlohmann::ordered_json::parse(json_response)
         .get<absmartly::ContextData>();
 
     absmartly::ContextConfig config;
@@ -241,7 +241,7 @@ You provide the context data obtained from your HTTP call to the A/B Smartly col
 absmartly::ContextConfig config;
 config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
 
-absmartly::ContextData data = nlohmann::json::parse(json_response)
+absmartly::ContextData data = nlohmann::ordered_json::parse(json_response)
     .get<absmartly::ContextData>();
 
 absmartly::Context context(config, data);
@@ -271,7 +271,7 @@ For long-running contexts, experiments started after the context was created wil
 
 ```cpp
 // Fetch fresh context data from the collector
-absmartly::ContextData fresh_data = nlohmann::json::parse(fresh_json_response)
+absmartly::ContextData fresh_data = nlohmann::ordered_json::parse(fresh_json_response)
     .get<absmartly::ContextData>();
 
 context.refresh(fresh_data);
