@@ -298,7 +298,7 @@ int Context::treatment(const std::string& experiment_name) {
 
     if (!assignment.exposed) {
         assignment.exposed = true;
-        expose(experiment_name, assignment, now);
+        trigger_exposures(experiment_name, assignment, now);
     }
 
     return assignment.variant;
@@ -367,12 +367,15 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
                     captured = true;
                 }
                 assignment.exposed = true;
-                expose(*name, assignment, now);
+                trigger_exposures(*name, assignment, now);
             }
 
-            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
-                assignment.variables.count(key) > 0) {
-                return assignment.variables.at(key);
+            if (assignment.assigned || assignment.overridden || assignment.rule_override) {
+                const auto value = assignment.variables.find(key);
+                if (value != assignment.variables.end()) return value->second;
+                // Java selects the switchback winner before reading its config. Unit experiments
+                // retain the existing C++ fallthrough behaviour.
+                if (assignment.switchback) return default_value;
             }
 
             if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
@@ -409,9 +412,12 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
         auto& assignment = get_or_create_assignment(experiment_name, now);
 
         if (assignment.has_variables) {
-            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
-                assignment.variables.count(key) > 0) {
-                return assignment.variables.at(key);
+            if (assignment.assigned || assignment.overridden || assignment.rule_override) {
+                const auto value = assignment.variables.find(key);
+                if (value != assignment.variables.end()) return value->second;
+                // Java selects the switchback winner before reading its config. Unit experiments
+                // retain the existing C++ fallthrough behaviour.
+                if (assignment.switchback) return default_value;
             }
 
             if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
@@ -857,11 +863,14 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     return assignments_[experiment_name];
 }
 
-void Context::trigger_exposures(const std::string& experiment_name, const Assignment& assignment) {
+void Context::trigger_exposures(const std::string& experiment_name, const Assignment& assignment,
+                                const std::optional<int64_t>& now) {
     const bool own = !assignment.suppressed || assignment.overridden || assignment.rule_override;
     if (!assignment.holdouts) {
         if (own) {
-            queue_exposure(experiment_name, assignment);
+            // Switchbacks use the reading that chose the period; units read at enqueue time.
+            emit_event("exposure", enqueue_exposure(experiment_name, assignment,
+                       assignment.switchback && now ? *now : now_millis()));
         }
         return;
     }
@@ -948,10 +957,6 @@ bool Context::holdouts_match(const ExperimentIndex& experiment, const Assignment
         }
     }
     return true;
-}
-
-void Context::queue_exposure(const std::string& experiment_name, const Assignment& assignment) {
-    emit_event("exposure", enqueue_exposure(experiment_name, assignment));
 }
 
 nlohmann::json Context::enqueue_exposure(const std::string& experiment_name, const Assignment& assignment) {

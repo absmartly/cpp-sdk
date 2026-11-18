@@ -25,7 +25,7 @@ struct SwitchbackIndex;
 struct SwitchbackSlot;
 struct SwitchbackState;
 struct ContextTestAccess;
-} // namespace internal
+}
 
 // A unit's arm in one holdout, cached per (holdout id, unit type) while the
 // holdout's iteration is unchanged. The arm count is pinned with the arm: arm 1
@@ -166,8 +166,8 @@ public:
 
 private:
     Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment);
-    void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
-    void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
+    void trigger_exposures(const std::string& experiment_name, const Assignment& assignment,
+                           const std::optional<int64_t>& now);
     nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment);
     std::shared_ptr<HoldoutAssignment> get_holdout_assignment(const HoldoutData& holdout, const std::string& unit_type);
     static bool holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment);
@@ -248,13 +248,11 @@ private:
     Assignment& switchback_assignment(const std::string& experiment_name, const ExperimentIndex& experiment,
                                       int64_t now);
     void resolve_switchback(internal::SwitchbackSlot& slot, const ExperimentIndex& experiment, int64_t period);
-    void expose(const std::string& experiment_name, const Assignment& assignment, const std::optional<int64_t>& now);
     nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment,
                                     int64_t exposed_at);
     std::optional<RuleResolution> resolve_rule(const ExperimentIndex& experiment, const std::string& unit_type,
                                                bool unit_pinned_missing);
     void index_switchbacks(const std::map<std::string, std::shared_ptr<internal::SwitchbackIndex>>& previous);
-    void drop_switchback_epoch(const std::string& experiment_name);
     void invalidate_absent_switchbacks();
     // The SDK's own tests only (tests/switchback_support.h); not API.
     friend struct internal::ContextTestAccess;
@@ -265,4 +263,4 @@ private:
     int call_depth_ = 0;
 };
 
-} // namespace absmartly
+}

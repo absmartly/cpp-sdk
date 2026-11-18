@@ -12,4 +12,4 @@ int64_t now_millis();
 using ClockFunction = int64_t (*)();
 void set_clock_for_testing(ClockFunction clock);
 
-} // namespace absmartly::internal
+}

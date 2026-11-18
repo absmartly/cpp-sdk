@@ -30,7 +30,7 @@ int64_t exact_long(const json& value) {
     return std::stoll(value.get<std::string>());
 }
 
-} // namespace
+}
 
 // Fixtures copied byte-for-byte from absmartly/abs 9bd2b5ca35 (via java-sdk 07807b5):
 // lib/utils/src/test/resources/switchback/golden-vectors.json, git blob b314abeb9e97b35f911c7caacec90b8ff73b9d77

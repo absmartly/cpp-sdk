@@ -3,6 +3,7 @@
 #include "absmartly/context.h"
 #include "switchback_internal.h"
 
+#include <list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -45,19 +46,26 @@ struct SwitchbackState {
 
     std::map<std::string, Epoch, std::less<>> epochs;
     uint64_t generation_counter = 0;
-    // Set while a treatment() or variable_value() call is in progress (Context's call depth). Each
-    // holds an assignment across the event logger, which may call back in and drop it, so one
-    // dropped meanwhile is parked in retired until the outermost call returns.
-    bool in_call = false;
-    std::vector<Slots::node_type> retired;
-    std::vector<std::map<std::string, Assignment>::node_type> retired_assignments;
+    // Reinsert extracted nodes into owning containers before returning to the caller: references
+    // obtained before extraction are usable again only after insertion, not in a node handle.
+    std::list<Slots> retired;
+    std::list<std::map<std::string, Assignment>> retired_assignments;
 
-    void drop(Slots& slots, Slots::iterator it) {
+    template <typename Map>
+    static void retire(Map& map, typename Map::iterator it, std::list<Map>& parked, bool in_call) {
         if (in_call) {
-            retired.push_back(slots.extract(it));
+            parked.emplace_back();
+            parked.back().insert(map.extract(it));
         } else {
-            slots.erase(it);
+            map.erase(it);
         }
+    }
+
+    void drop(Slots& slots, Slots::iterator it, bool in_call) {
+        retire(slots, it, retired, in_call);
+    }
+    void drain(Epoch& epoch, bool in_call) {
+        while (!epoch.slots.empty()) drop(epoch.slots, epoch.slots.begin(), in_call);
     }
 };
 
@@ -68,11 +76,9 @@ class SwitchbackCallGuard {
 public:
     SwitchbackCallGuard(int& depth, const std::shared_ptr<SwitchbackState>& state) : depth_(depth), state_(state) {
         ++depth_;
-        if (state_) state_->in_call = true;
     }
     ~SwitchbackCallGuard() {
         if (--depth_ == 0 && state_) {
-            state_->in_call = false;
             state_->retired.clear();
             state_->retired_assignments.clear();
         }
@@ -85,4 +91,4 @@ private:
     const std::shared_ptr<SwitchbackState>& state_;
 };
 
-} // namespace absmartly::internal
+}

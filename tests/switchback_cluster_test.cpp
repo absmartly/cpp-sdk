@@ -65,7 +65,7 @@ json store_exposure(int variant, int64_t at, bool eligible = true, bool audience
     return exposure(1, "exp_sb", STORE, variant, at, {true, eligible, false, false, false, audience_mismatch});
 }
 
-} // namespace
+}
 
 // --- ContextSwitchbackClusterTest -------------------------------------------------------------
 
@@ -571,7 +571,7 @@ void require_ineligible(const std::optional<Assigned>& a, const std::string& uni
 
 json store(const json& value) { return {{"store", value}}; }
 
-} // namespace
+}
 
 TEST_CASE("Switchback rule: a missing or unreadable cluster configuration is only a legacy ineligible control",
           "[switchback][rule][legacy]") {
@@ -793,7 +793,7 @@ struct Oracle {
 
 enum class ClusterCase { Single, DisagreeingSecondSource, MissingValue, FilteredValue };
 
-} // namespace
+}
 
 TEST_CASE("Switchback rule: the context matches the SDK switchback wire-rule parity grid", "[switchback][rule][grid]") {
     int eligible = 0;
@@ -962,7 +962,7 @@ ordered_json attrs(std::initializer_list<std::pair<const char*, json>> entries) 
     return map;
 }
 
-} // namespace
+}
 
 TEST_CASE("Switchback parity: raw key schedules match the independent reference", "[switchback][parity]") {
     require_eligible(serve(parity_experiment(clusters({{STORE, "city"}})), {{STORE, "s1"}}, attrs({{"city", "Lisboa"}})),

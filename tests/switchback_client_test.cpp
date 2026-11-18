@@ -5,7 +5,6 @@ using namespace absmartly;
 
 namespace {
 
-// Serves one context payload body.
 class PayloadHTTPClient : public HTTPClient {
 public:
     explicit PayloadHTTPClient(std::string body) : body_(std::move(body)) {}
@@ -40,7 +39,7 @@ ClientConfig config() {
     return c;
 }
 
-} // namespace
+}
 
 TEST_CASE("Switchback client: a fetched payload keeps each cluster map in its served order", "[switchback][client]") {
     Client client(config(), std::make_shared<PayloadHTTPClient>(

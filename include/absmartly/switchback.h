@@ -17,4 +17,4 @@ int assign_switchback(const std::string& cluster_unit, int64_t period_index, int
 std::vector<int> switchback_permutation(const std::string& cluster_unit, int64_t cycle_index, int64_t seed,
                                         int arm_count);
 
-} // namespace absmartly
+}

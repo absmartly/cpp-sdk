@@ -106,7 +106,7 @@ inline ContextConfig units(std::initializer_list<std::pair<const char*, json>> e
     return config;
 }
 
-} // namespace sbtest
+}
 
 namespace absmartly::internal {
 
@@ -144,8 +144,8 @@ struct ContextTestAccess {
     }
 };
 
-} // namespace absmartly::internal
+}
 
 namespace sbtest {
 using absmartly::internal::ContextTestAccess;
-} // namespace sbtest
+}

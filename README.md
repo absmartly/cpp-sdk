@@ -500,6 +500,9 @@ fields); there is nothing to call.
   unit is recorded as ineligible, then a custom assignment, then the draw for
   the period `floor((now - switchbackStartAt) / switchbackPeriodMs)`.
 - Holdouts never apply to a switchback.
+- For a variable key, the first assigned switchback wins even when its selected
+  arm omits the key: that returns the default, without trying a later experiment
+  (matching java-sdk). Unit experiments keep their existing fallthrough behaviour.
 - One exposure per experiment and period, under the serving unit, stamped with
   the time that chose the period. The cluster is read once per period: a
   `set_attribute()` later in the period takes effect in the next one. A refresh

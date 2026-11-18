@@ -26,7 +26,7 @@ bool is_switchback(const ExperimentData& experiment) {
 // The unit an override with no serving unit is recorded under: the first linked type of a
 // readable cluster map, otherwise the declared unitType the legacy path reads.
 const std::string& fallback_unit_type(const SwitchbackIndex& switchback) {
-    return switchback.legacy ? switchback.unit_type : switchback.source_types.front();
+    return switchback.sources.empty() ? switchback.unit_type : switchback.sources.front().type;
 }
 
 std::string audience_string(const nlohmann::json& audience) {
@@ -34,15 +34,13 @@ std::string audience_string(const nlohmann::json& audience) {
     return audience.is_null() ? std::string() : audience.dump();
 }
 
-} // namespace
+}
 
 void Context::index_switchbacks(const std::map<std::string, std::shared_ptr<SwitchbackIndex>>& previous) {
     for (auto& [name, entry] : index_) {
         if (!is_switchback(*entry.data)) continue;
         if (!switchbacks_) {
             switchbacks_ = std::make_shared<SwitchbackState>();
-            // A load from inside a call (an event logger's refresh) joins that call.
-            switchbacks_->in_call = call_depth_ > 0;
         }
         auto index = std::make_shared<SwitchbackIndex>(internal::make_switchback_index(*entry.data));
         // An unchanged identity keeps its generation, and so its slots; anything else, including a
@@ -52,27 +50,20 @@ void Context::index_switchbacks(const std::map<std::string, std::shared_ptr<Swit
                                 ? it->second->generation
                                 : ++switchbacks_->generation_counter;
         entry.switchback = std::move(index);
-        // An assignment cached while this was a unit experiment is never reused.
         const auto stale = assignments_.find(name);
         if (stale != assignments_.end()) {
-            if (switchbacks_->in_call) {
-                switchbacks_->retired_assignments.push_back(assignments_.extract(stale));
-            } else {
-                assignments_.erase(stale);
-            }
+            SwitchbackState::retire(assignments_, stale, switchbacks_->retired_assignments, call_depth_ != 0);
         }
     }
     if (!switchbacks_) return;
-    // A switchback that is now a unit experiment, or gone, drops its slots.
     for (auto epoch = switchbacks_->epochs.begin(); epoch != switchbacks_->epochs.end();) {
         const auto entry = index_.find(epoch->first);
         if (entry != index_.end() && entry->second.switchback) {
             ++epoch;
             continue;
         }
-        const auto next = std::next(epoch);
-        drop_switchback_epoch(epoch->first);
-        epoch = next;
+        switchbacks_->drain(epoch->second, call_depth_ != 0);
+        epoch = switchbacks_->epochs.erase(epoch);
     }
 }
 
@@ -84,16 +75,6 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
         return switchback_assignment(experiment_name, *experiment, *now);
     }
     return get_or_create_assignment(experiment_name, experiment);
-}
-
-void Context::drop_switchback_epoch(const std::string& experiment_name) {
-    const auto epoch = switchbacks_->epochs.find(experiment_name);
-    if (epoch == switchbacks_->epochs.end()) return;
-    auto& slots = epoch->second.slots;
-    while (!slots.empty()) {
-        switchbacks_->drop(slots, slots.begin());
-    }
-    switchbacks_->epochs.erase(epoch);
 }
 
 void Context::invalidate_absent_switchbacks() {
@@ -108,7 +89,7 @@ void Context::invalidate_absent_switchbacks() {
             // An exposed override is kept: it already published, and the override still wins.
             if (slot.serving.status == SwitchbackServing::Status::Absent &&
                 !(slot.assignment.overridden && slot.assignment.exposed)) {
-                switchbacks_->drop(slots, it);
+                switchbacks_->drop(slots, it, call_depth_ != 0);
             }
             it = next;
         }
@@ -121,7 +102,7 @@ void Context::invalidate_absent_switchbacks() {
 static SwitchbackServing read_serving(const SwitchbackIndex& switchback, const std::map<std::string, nlohmann::json>& units,
                                       const std::vector<Attribute>& attrs, int64_t now) {
     SwitchbackServing serving;
-    if (switchback.legacy) {
+    if (switchback.sources.empty()) {
         // The declared unitType only identifies an ineligible control response.
         if (!switchback.unit_type.empty() && units.count(switchback.unit_type) > 0) {
             serving.status = SwitchbackServing::Status::Ineligible;
@@ -134,12 +115,12 @@ static SwitchbackServing read_serving(const SwitchbackIndex& switchback, const s
     const std::string* serving_type = nullptr;
     std::optional<std::string> key;
     bool disagreement = false;
-    for (size_t s = 0; s < switchback.source_types.size(); ++s) {
-        const auto& type = switchback.source_types[s];
+    for (const auto& source : switchback.sources) {
+        const auto& type = source.type;
         if (units.count(type) == 0) continue;
         if (first == nullptr) first = &type;
 
-        const auto& path = switchback.source_paths[s];
+        const auto& path = source.path;
         const Attribute* latest = nullptr;
         for (const auto& attr : attrs) {
             if (attr.setAt <= now && internal::java_trim(attr.name) == path.root_key() &&
@@ -179,9 +160,7 @@ Assignment& Context::switchback_assignment(const std::string& experiment_name, c
     auto& epoch = switchbacks_->epochs[experiment_name];
     if (epoch.generation != switchback.generation) {
         // A new epoch: every slot of the old definition goes, the one without a period included.
-        while (!epoch.slots.empty()) {
-            switchbacks_->drop(epoch.slots, epoch.slots.begin());
-        }
+        switchbacks_->drain(epoch, call_depth_ != 0);
         epoch.generation = switchback.generation;
     }
     auto& slots = epoch.slots;
@@ -244,11 +223,10 @@ Assignment& Context::switchback_assignment(const std::string& experiment_name, c
         assignment.variables = experiment.variables[static_cast<size_t>(assignment.variant)];
         assignment.has_variables = true;
     }
-    // Nothing is ever recorded for a silent slot.
     assignment.exposed = slot.silent;
 
     if (cached != slots.end()) {
-        switchbacks_->drop(slots, cached);
+        switchbacks_->drop(slots, cached, call_depth_ != 0);
     }
     auto& installed = slots.emplace(period, std::move(slot)).first->second;
 
@@ -260,7 +238,7 @@ Assignment& Context::switchback_assignment(const std::string& experiment_name, c
         while (periods() > RETAINED_PERIODS) {
             auto evicted = slots.upper_bound(NO_SWITCHBACK_PERIOD);
             if (evicted->first == period) ++evicted;
-            switchbacks_->drop(slots, evicted);
+            switchbacks_->drop(slots, evicted, call_depth_ != 0);
         }
     }
     return installed.assignment;
@@ -327,10 +305,7 @@ void Context::resolve_switchback(SwitchbackSlot& slot, const ExperimentIndex& ex
     }
 
     const std::string hashed = unit_hash(assignment.unit_type);
-    auto assigner_it = assigners_.find(assignment.unit_type);
-    if (assigner_it == assigners_.end()) {
-        assigner_it = assigners_.emplace(assignment.unit_type, VariantAssigner(hashed)).first;
-    }
+    const auto assigner_it = assigners_.try_emplace(assignment.unit_type, hashed).first;
     if (assigner_it->second.assign(data.trafficSplit, data.trafficSeedHi, data.trafficSeedLo) != 1) {
         // A traffic miss on an eligible cluster is recorded, as for a unit experiment.
         assignment.eligible = false;
@@ -344,14 +319,4 @@ void Context::resolve_switchback(SwitchbackSlot& slot, const ExperimentIndex& ex
     assignment.variant = assign_switchback(serving.cluster_key, period, switchback.seed, switchback.arm_count);
 }
 
-void Context::expose(const std::string& experiment_name, const Assignment& assignment,
-                     const std::optional<int64_t>& now) {
-    if (!assignment.switchback) {
-        trigger_exposures(experiment_name, assignment);
-        return;
-    }
-    // Stamped with the reading that chose the period: analysis derives the period from exposedAt.
-    emit_event("exposure", enqueue_exposure(experiment_name, assignment, now ? *now : internal::now_millis()));
 }
-
-} // namespace absmartly

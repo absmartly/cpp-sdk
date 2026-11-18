@@ -19,4 +19,4 @@ void set_clock_for_testing(ClockFunction clock) {
     test_clock.store(clock, std::memory_order_relaxed);
 }
 
-} // namespace absmartly::internal
+}

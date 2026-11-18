@@ -112,7 +112,7 @@ const Flags RULE{false, true, false, false, false, false, true};
 const Flags STRICT_MISMATCH{false, true, false, false, false, true, false};
 const Flags OVERRIDDEN{false, true, true, false, false, false, false};
 
-} // namespace
+}
 
 TEST_CASE("Switchback: the cluster identity is the raw cluster value", "[switchback][context]") {
     ClockScope clock;
@@ -684,7 +684,7 @@ std::vector<ParityBranch> parity_branches() {
     };
 }
 
-} // namespace
+}
 
 TEST_CASE("Switchback: exposure flags match a unit experiment for every branch", "[switchback][context][exposure]") {
     ClockScope clock(ANCHOR + 2 * HOUR + 3);
@@ -1176,7 +1176,6 @@ TEST_CASE("Switchback: each analysis-only field alone keeps the epoch", "[switch
     }
 }
 
-// Ports of the independent review's kill tests: each pins a contract a mutant got past.
 TEST_CASE("Switchback: a traffic miss beats a custom assignment", "[switchback][context][precedence]") {
     ClockScope clock(ANCHOR + 5);
     auto experiment = switchback(2, HOUR);
@@ -1241,7 +1240,6 @@ TEST_CASE("Switchback: unit, switchback, unit again re-resolves every time", "[s
     context->treatment("exp_sb");
     REQUIRE(ContextTestAccess::switchback_slots(*context) == 1);
     context->refresh(data_of({unit}));
-    // The switchback's slots go with the definition.
     REQUIRE(ContextTestAccess::switchback_slots(*context) == 0);
     context->treatment("exp_sb");
     REQUIRE(context->pending() == 3);
@@ -1320,4 +1318,17 @@ TEST_CASE("Switchback: a slot dropped outside any call is freed at once", "[swit
     context->refresh(data_of({as_unit(switchback(2, HOUR))}));
     REQUIRE(ContextTestAccess::switchback_slots(*context) == 0);
     REQUIRE(ContextTestAccess::retired_slots(*context) == 0);
+}
+
+TEST_CASE("Switchback: an assigned winner whose arm omits a shared key returns the default", "[switchback][context][variables]") {
+    ClockScope clock(ANCHOR);
+    auto sb = switchback(2, HOUR);
+    sb.variants[0].config = "{}";
+    auto later = as_unit(switchback(2, "later", 2, HOUR));
+    later.fullOnVariant = 1;
+    auto context = create(data_of({sb, later}));
+    REQUIRE(context->peek_variable_value("sb.arm", -1) == -1);
+    REQUIRE(context->pending() == 0);
+    REQUIRE(context->variable_value("sb.arm", -1) == -1);
+    REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", 0, ANCHOR)}));
 }
