@@ -346,9 +346,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         auto& assignment = get_or_create_assignment(*name);
 
         if (assignment.has_variables) {
-            // A logger that finalized the context from an earlier exposure has flushed
-            // it; later candidates are resolved without queuing into the sealed context.
-            if (!assignment.exposed && !finalized_ && !finalizing_) {
+            if (!assignment.exposed) {
                 if (!captured) {
                     // The current name is copied too, since a refresh may free the index
                     // entry that owns it; the walk resumes after it.
@@ -862,7 +860,10 @@ void Context::trigger_exposures(const std::string& experiment_name, const Assign
     }
 
     // Every exposure of this call is queued before any event logger runs, so a logger that
-    // finalizes (or refreshes) from the first callback still flushes the whole batch.
+    // finalizes (or refreshes) from the first callback still flushes the whole batch. JS
+    // queues each exposure just before its callback, so there an exposure a logger queues
+    // from that callback lands between the experiment's and its holdouts'; here it follows
+    // them. The set published is the same.
     // Held by value: a re-entrant event logger may replace this assignment.
     const auto holdouts = assignment.holdouts;
     std::vector<nlohmann::json> events;

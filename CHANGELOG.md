@@ -14,6 +14,22 @@
   without holdouts assign and publish exactly as before. Ports javascript-sdk#65
   and java-sdk#12.
 
+### Fixed
+
+- An event logger that called `refresh()` from an exposure inside
+  `variable_value()` could crash the call (the candidate list it walked was
+  freed). The walk now continues over the candidates it started with, as in
+  javascript-sdk.
+
+### Notes
+
+- All exposures of one `treatment()`/`variable_value()` call on a covered
+  experiment (its own and its holdouts') are queued before the event logger
+  sees the first of them, so a logger that calls `finalize()` or `publish()`
+  from that callback sends them all. javascript-sdk queues each one just
+  before its callback, and there such a logger leaves the holdout exposures
+  pending.
+
 ## 1.0.0
 
 ### Added

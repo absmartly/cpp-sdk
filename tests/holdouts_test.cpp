@@ -1956,10 +1956,10 @@ TEST_CASE("Holdouts: a held-out unit's holdout exposures all flush when a logger
     REQUIRE(logger->flushed.at(0).exposures.size() == 2);
 }
 
-TEST_CASE("Holdouts: variable_value queues nothing into a context its logger finalized", "[holdouts][logger][finalize]") {
-    // The first candidate's exposure finalizes the context; the walk still returns the winning
-    // value, but later candidates are not exposed into the sealed context (where no publish or
-    // finalize could ever send them).
+TEST_CASE("Holdouts: variable_value after a logger finalizes behaves as in JS and 1.0.0", "[holdouts][logger][finalize]") {
+    // The first candidate's exposure finalizes the context. As in JS (and 1.0.0) the walk goes
+    // on: the second candidate wins the key and its exposure is queued (and logged) after the
+    // finalize, so it stays pending. Only the first candidate was published.
     auto first = with_variables(new_experiment(1, "exp_first"), "color");
     first.split = {1.0, 0.0};
     first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
@@ -1969,6 +1969,49 @@ TEST_CASE("Holdouts: variable_value queues nothing into a context its logger fin
 
     REQUIRE(context.variable_value("color", "default") == "treatment");
     REQUIRE(context.is_finalized());
-    REQUIRE(context.pending() == 0);
+    REQUIRE(context.pending() == 1);
     REQUIRE(logger->flushed.at(0).exposures.size() == 1);
+    REQUIRE(logger->events ==
+            std::vector<std::string>{"ready", "exposure:exp_first", "publish", "finalize", "exposure:exp_second"});
+}
+
+TEST_CASE("Holdouts: a covered call logs its own exposure, then its holdouts in id order", "[holdouts][logger]") {
+    // All exposures are queued first, then delivered to the logger in queue order.
+    auto logger = std::make_shared<ExposureLog>();
+    Context context(config_with(UID_NOT_HELD_OUT),
+                    data_of({new_holdout(12, "holdout_b", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO),
+                             new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)},
+                            {covered_by(new_experiment(1, "exp_order"), {12, 11})}),
+                    logger);
+
+    std::vector<size_t> pending_at_callback;
+    logger->on_exposure = [&](Context& c, const json&) { pending_at_callback.push_back(static_cast<size_t>(c.pending())); };
+    context.treatment("exp_order");
+
+    std::vector<std::string> names;
+    for (const auto& exposure : logger->exposures) names.push_back(exposure["name"]);
+    REQUIRE(names == std::vector<std::string>{"exp_order", "holdout_a", "holdout_b"});
+    REQUIRE(pending_at_callback == std::vector<size_t>{3, 3, 3});
+}
+
+// Measured with this exact fixture and logger against main (1.0.0): 69. The test binary's own
+// operator new adds nothing per call, so the count is the SDK's.
+constexpr long UNCOVERED_FIRST_TREATMENT_ALLOCATIONS = 69;
+
+TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdouts][cost]") {
+    // Measured against main (1.0.0) with the same logger: the first treatment() of an
+    // uncovered experiment costs the same, so the uncovered path takes no batch.
+    struct CountingLogger : ContextEventLogger {
+        int exposures = 0;
+        void handle_event(Context&, const std::string& type, const json&) override {
+            if (type == "exposure") ++exposures;
+        }
+    };
+    auto logger = std::make_shared<CountingLogger>();
+    Context context(config_with(UID), data_of({}, {new_experiment(1, "exp_plain"), new_experiment(2, "warm_up")}),
+                    logger);
+    context.treatment("warm_up"); // hashes the unit and creates its assigner
+    const std::string name = "exp_plain";
+    REQUIRE(allocations_of([&] { context.treatment(name); }) == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
+    REQUIRE(logger->exposures == 2);
 }
