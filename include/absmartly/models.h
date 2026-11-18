@@ -96,6 +96,18 @@ struct ExperimentData {
     std::string switchbackEstimand;
 };
 
+namespace detail {
+
+inline constexpr std::pair<const char*, std::optional<int64_t> ExperimentData::*> switchback_grid[] = {
+    {"switchbackStartAt", &ExperimentData::switchbackStartAt},
+    {"switchbackPeriodMs", &ExperimentData::switchbackPeriodMs},
+    {"switchbackCarryoverDurationMs", &ExperimentData::switchbackCarryoverDurationMs},
+    {"switchbackBurnInDurationMs", &ExperimentData::switchbackBurnInDurationMs},
+    {"switchbackBurnOutDurationMs", &ExperimentData::switchbackBurnOutDurationMs},
+};
+
+} // namespace detail
+
 inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     j = nlohmann::json{
         {"id", e.id},
@@ -135,16 +147,10 @@ inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     if (e.switchbackClusterValues.has_value()) {
         j["switchbackClusterValues"] = *e.switchbackClusterValues;
     }
-    const std::pair<const char*, const std::optional<int64_t>*> grid[] = {
-        {"switchbackStartAt", &e.switchbackStartAt},
-        {"switchbackPeriodMs", &e.switchbackPeriodMs},
-        {"switchbackCarryoverDurationMs", &e.switchbackCarryoverDurationMs},
-        {"switchbackBurnInDurationMs", &e.switchbackBurnInDurationMs},
-        {"switchbackBurnOutDurationMs", &e.switchbackBurnOutDurationMs},
-    };
-    for (const auto& [name, value] : grid) {
-        if (value->has_value()) {
-            j[name] = **value;
+    for (const auto& [name, member] : detail::switchback_grid) {
+        const auto& value = e.*member;
+        if (value.has_value()) {
+            j[name] = *value;
         }
     }
     if (!e.switchbackDesignType.empty()) {
@@ -240,11 +246,9 @@ inline void decode_switchback(const nlohmann::json& j, ExperimentData& e) {
     e.randomizationType.clear();
     e.switchbackClusters = nullptr;
     e.switchbackClusterValues.reset();
-    e.switchbackStartAt.reset();
-    e.switchbackPeriodMs.reset();
-    e.switchbackCarryoverDurationMs.reset();
-    e.switchbackBurnInDurationMs.reset();
-    e.switchbackBurnOutDurationMs.reset();
+    for (const auto& [name, member] : switchback_grid) {
+        (e.*member).reset();
+    }
     e.switchbackDesignType.clear();
     e.switchbackEstimand.clear();
     if (!j.is_object()) {
@@ -281,17 +285,10 @@ inline void decode_switchback(const nlohmann::json& j, ExperimentData& e) {
         }
         e.switchbackClusterValues = std::move(allowed);
     }
-    const std::pair<const char*, std::optional<int64_t>*> grid[] = {
-        {"switchbackStartAt", &e.switchbackStartAt},
-        {"switchbackPeriodMs", &e.switchbackPeriodMs},
-        {"switchbackCarryoverDurationMs", &e.switchbackCarryoverDurationMs},
-        {"switchbackBurnInDurationMs", &e.switchbackBurnInDurationMs},
-        {"switchbackBurnOutDurationMs", &e.switchbackBurnOutDurationMs},
-    };
-    for (const auto& [name, value] : grid) {
+    for (const auto& [name, member] : switchback_grid) {
         const auto it = j.find(name);
         if (it != j.end()) {
-            *value = get_int64(*it);
+            e.*member = get_int64(*it);
         }
     }
 }

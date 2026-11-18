@@ -3,6 +3,7 @@
 #include "absmartly/hashing.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <stdexcept>
 
@@ -89,27 +90,15 @@ int64_t floor_div(int64_t dividend, int64_t divisor) {
 }
 
 std::optional<int32_t> try_parse_int(std::string_view s) {
-    const bool negative = !s.empty() && s.front() == '-';
-    size_t i = negative ? 1 : 0;
-    if (i == s.size()) {
+    if (s.empty()) {
         return std::nullopt;
     }
-    int64_t magnitude = 0;
-    for (; i < s.size(); ++i) {
-        const char c = s[i];
-        if (c < '0' || c > '9') {
-            return std::nullopt;
-        }
-        magnitude = magnitude * 10 + (c - '0');
-        if (magnitude > (int64_t{1} << 31)) {
-            return std::nullopt;
-        }
-    }
-    const int64_t value = negative ? -magnitude : magnitude;
-    if (value > INT32_MAX) {
+    int32_t value = 0;
+    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), value);
+    if (ec != std::errc{} || ptr != s.data() + s.size()) {
         return std::nullopt;
     }
-    return static_cast<int32_t>(value);
+    return value;
 }
 
 std::optional<SwitchbackPath> SwitchbackPath::parse_supported(std::string_view path) {
