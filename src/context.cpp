@@ -346,7 +346,9 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         auto& assignment = get_or_create_assignment(*name);
 
         if (assignment.has_variables) {
-            if (!assignment.exposed) {
+            // A logger that finalized the context from an earlier exposure has flushed
+            // it; later candidates are resolved without queuing into the sealed context.
+            if (!assignment.exposed && !finalized_ && !finalizing_) {
                 if (!captured) {
                     // The current name is copied too, since a refresh may free the index
                     // entry that owns it; the walk resumes after it.
@@ -851,34 +853,44 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
 }
 
 void Context::trigger_exposures(const std::string& experiment_name, const Assignment& assignment) {
+    const bool own = !assignment.suppressed || assignment.overridden || assignment.rule_override;
+    if (!assignment.holdouts) {
+        if (own) {
+            queue_exposure(experiment_name, assignment);
+        }
+        return;
+    }
+
+    // Every exposure of this call is queued before any event logger runs, so a logger that
+    // finalizes (or refreshes) from the first callback still flushes the whole batch.
     // Held by value: a re-entrant event logger may replace this assignment.
     const auto holdouts = assignment.holdouts;
+    std::vector<nlohmann::json> events;
+    events.reserve(holdouts->size() + 1);
 
     // A suppressed experiment publishes no exposure of its own; the holdouts record it.
-    if (!assignment.suppressed || assignment.overridden || assignment.rule_override) {
-        queue_exposure(experiment_name, assignment);
+    if (own) {
+        events.push_back(enqueue_exposure(experiment_name, assignment));
     }
 
     // The pins from the decision, not a live re-resolution, so a refresh between the
     // decision and here cannot publish a holdout exposure from another iteration.
-    if (holdouts) {
-        for (const auto& pin : *holdouts) {
-            if (pin.assignment && !pin.assignment->exposed) {
-                pin.assignment->exposed = true;
-                queue_holdout_exposure(pin.name, *pin.assignment);
-            }
+    for (const auto& pin : *holdouts) {
+        if (pin.assignment && !pin.assignment->exposed) {
+            pin.assignment->exposed = true;
+            Assignment exposed;
+            exposed.id = pin.assignment->id;
+            exposed.unit_type = pin.assignment->unit_type;
+            exposed.variant = pin.assignment->variant;
+            exposed.assigned = true;
+            exposed.eligible = true;
+            events.push_back(enqueue_exposure(pin.name, exposed));
         }
     }
-}
 
-void Context::queue_holdout_exposure(const std::string& holdout_name, const HoldoutAssignment& assignment) {
-    Assignment exposed;
-    exposed.id = assignment.id;
-    exposed.unit_type = assignment.unit_type;
-    exposed.variant = assignment.variant;
-    exposed.assigned = true;
-    exposed.eligible = true;
-    queue_exposure(holdout_name, exposed);
+    for (const auto& event : events) {
+        emit_event("exposure", event);
+    }
 }
 
 std::shared_ptr<HoldoutAssignment> Context::get_holdout_assignment(const HoldoutData& holdout,
@@ -931,6 +943,10 @@ bool Context::holdouts_match(const ExperimentIndex& experiment, const Assignment
 }
 
 void Context::queue_exposure(const std::string& experiment_name, const Assignment& assignment) {
+    emit_event("exposure", enqueue_exposure(experiment_name, assignment));
+}
+
+nlohmann::json Context::enqueue_exposure(const std::string& experiment_name, const Assignment& assignment) {
     Exposure exposure;
     exposure.id = assignment.id;
     exposure.name = experiment_name;
@@ -953,7 +969,7 @@ void Context::queue_exposure(const std::string& experiment_name, const Assignmen
     exposures_.push_back(std::move(exposure));
     pending_++;
 
-    emit_event("exposure", exposure_data);
+    return exposure_data;
 }
 
 void Context::build_index() {

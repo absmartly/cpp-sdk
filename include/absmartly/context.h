@@ -159,7 +159,7 @@ private:
     Assignment& get_or_create_assignment(const std::string& experiment_name);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
     void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
-    void queue_holdout_exposure(const std::string& holdout_name, const HoldoutAssignment& assignment);
+    nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment);
     std::shared_ptr<HoldoutAssignment> get_holdout_assignment(const HoldoutData& holdout, const std::string& unit_type);
     static bool holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment);
 

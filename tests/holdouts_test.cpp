@@ -1887,3 +1887,74 @@ TEST_CASE("Holdouts: cached variable reads do not capture candidate names", "[ho
         for (int i = 0; i < 10; ++i) context.variable_value(key, fallback);
     }) == 0);
 }
+
+// --- A logger that finalizes from an exposure ---------------------------------------------------
+
+namespace {
+
+struct FinalizingLogger : ContextEventLogger {
+    bool finalized = false;
+    std::vector<PublishEvent> flushed;
+    std::vector<std::string> events;
+    void handle_event(Context& context, const std::string& type, const json& data) override {
+        events.push_back(type == "exposure" ? "exposure:" + data["name"].get<std::string>() : type);
+        if (type == "exposure" && !finalized) {
+            finalized = true;
+            flushed.push_back(context.finalize());
+        }
+    }
+};
+
+} // namespace
+
+TEST_CASE("Holdouts: a logger that finalizes on the first exposure still flushes the holdout exposures",
+          "[holdouts][logger][finalize]") {
+    // treatment() queues the experiment's own exposure and its holdouts' exposures before any
+    // callback runs, so finalize() from the first callback publishes all of them.
+    auto logger = std::make_shared<FinalizingLogger>();
+    Context context(config_with(UID_NOT_HELD_OUT),
+                    data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO),
+                             new_holdout(12, "holdout_b", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO)},
+                            {covered_by(new_experiment(1, "exp_finalize"), {11, 12})}),
+                    logger);
+
+    REQUIRE(context.treatment("exp_finalize") == 0);
+    REQUIRE(context.is_finalized());
+    REQUIRE(context.pending() == 0);
+    REQUIRE(logger->flushed.size() == 1);
+    std::vector<std::string> names;
+    for (const auto& exposure : logger->flushed[0].exposures) names.push_back(exposure.name);
+    REQUIRE(names == std::vector<std::string>{"exp_finalize", "holdout_a", "holdout_b"});
+}
+
+TEST_CASE("Holdouts: a held-out unit's holdout exposures all flush when a logger finalizes",
+          "[holdouts][logger][finalize]") {
+    // Suppressed: no own exposure, so the first callback is the first holdout's.
+    auto logger = std::make_shared<FinalizingLogger>();
+    Context context(config_with(UID),
+                    data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO),
+                             new_holdout(12, "holdout_b", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO)},
+                            {covered_by(new_experiment(1, "exp_finalize"), {11, 12})}),
+                    logger);
+
+    REQUIRE(context.treatment("exp_finalize") == 0);
+    REQUIRE(context.pending() == 0);
+    REQUIRE(logger->flushed.at(0).exposures.size() == 2);
+}
+
+TEST_CASE("Holdouts: variable_value queues nothing into a context its logger finalized", "[holdouts][logger][finalize]") {
+    // The first candidate's exposure finalizes the context; the walk still returns the winning
+    // value, but later candidates are not exposed into the sealed context (where no publish or
+    // finalize could ever send them).
+    auto first = with_variables(new_experiment(1, "exp_first"), "color");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    auto logger = std::make_shared<FinalizingLogger>();
+    Context context(config_with(UID), data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color")}),
+                    logger);
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(context.is_finalized());
+    REQUIRE(context.pending() == 0);
+    REQUIRE(logger->flushed.at(0).exposures.size() == 1);
+}
