@@ -553,6 +553,27 @@ TEST_CASE("Assignment rules: read caches", "[assignment-rules]") {
         REQUIRE(exposures_for(ctx.publish(), "exp_test_abc").size() == 1);
     }
 
+    SECTION("a refresh with identical rules re-stamps the assignment without resolving the rules again") {
+        auto data = make_data(rules_of({assign_rule(1)}));
+        Context ctx(make_config(), data);
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        ctx.refresh(data);
+        ContextTestAccess::attributes_map_cache(ctx)["country"] = "PT";
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        REQUIRE(ContextTestAccess::assignment(ctx, "exp_test_abc").rule_data_seq == ContextTestAccess::data_seq(ctx));
+    }
+
+    SECTION("a rule check after an unrelated attribute change is not repeated on later reads") {
+        Context ctx(make_config(), make_data(rules_of({assign_rule(1)})));
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        ctx.set_attribute("age", 30);
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+        ContextTestAccess::attributes_map_cache(ctx)["country"] = "PT";
+        REQUIRE(ctx.treatment("exp_test_abc") == 1);
+    }
+
     SECTION("the attribute map is built once per attribute change") {
         Context ctx(make_config(), make_data(nullptr));
         ctx.set_attribute("country", "US");
