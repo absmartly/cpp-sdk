@@ -946,7 +946,6 @@ TEST_CASE("Holdouts: peek_variable_value, a late unit, then variable_value re-re
 
     context.set_unit("user_id", UID);
 
-    // Control (variant A) has no my_var, so the default is returned.
     REQUIRE(context.variable_value("my_var", "default") == "default");
     REQUIRE(context.pending() == 1);
     require_published(context, {holdout_exposure(11, "holdout_var_late", 0, "user_id")}, {{"user_id", UID}});
@@ -1402,7 +1401,6 @@ TEST_CASE("Holdouts H4: peek on a covered experiment queues nothing", "[holdouts
         context.peek("exp_peek");
         REQUIRE(context.pending() == 0);
 
-        // The first exposing call still publishes the holdout.
         context.treatment("exp_peek");
         REQUIRE(context.pending() == (uid == UID ? 1 : 2));
     }
@@ -1483,7 +1481,6 @@ TEST_CASE("Holdouts: the java-sdk holdouts_context.json fixture decodes", "[hold
     REQUIRE(slim.split == std::vector<double>{0.05, 0.05, 0.9});
     REQUIRE(slim.holdoutType.empty());
 
-    // The fixture's experiment covers UID with holdout_a, which holds it out.
     Context context(config_with(UID), data);
     REQUIRE(context.treatment("exp_test_holdout") == 0);
     require_published(context, {holdout_exposure(11, "holdout_a", 0)});
@@ -1547,7 +1544,6 @@ TEST_CASE("Holdouts: malformed holdout entries and ids degrade only themselves",
 }
 
 TEST_CASE("Holdouts: a payload without holdouts serialises and publishes as before", "[holdouts][json][compat]") {
-    // The same experiments with no holdouts key, with "holdouts": [] and with "holdouts": null.
     const json experiment = {{"id", 1}, {"name", "exp_plain"}, {"unitType", UNIT_TYPE}, {"iteration", 1},
                              {"seedHi", NORMAL_SEED_HI}, {"seedLo", NORMAL_SEED_LO}, {"split", {0.5, 0.5}},
                              {"trafficSeedHi", 1}, {"trafficSeedLo", 2}, {"trafficSplit", {0, 1}},

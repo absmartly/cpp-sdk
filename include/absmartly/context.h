@@ -71,7 +71,6 @@ struct Assignment {
     std::map<std::string, nlohmann::json> variables;
     bool has_variables = false;
     int attrs_seq = 0;
-    // An applicable holdout holds the unit out: variant 0, no exposure of its own.
     bool suppressed = false;
     // The holdouts covering the experiment when this was resolved, in id order;
     // null when there are none. Exposures fire from these, never re-resolved.
@@ -83,8 +82,7 @@ struct ExperimentIndex {
     std::vector<std::map<std::string, nlohmann::json>> variables;
     // data->assignmentRules parsed once; null when there are none or they are invalid.
     nlohmann::json assignment_rules;
-    // data->holdoutIds resolved against the usable holdouts, sorted by id and unique.
-    std::vector<const HoldoutData*> holdouts; // Non-owning, like data.
+    std::vector<const HoldoutData*> holdouts; // Sorted by id, unique; non-owning, like data.
 };
 
 struct RuleResolution {
@@ -228,7 +226,7 @@ private:
 
     AudienceMatcher audience_matcher_;
 
-    // Holdouts with a non-empty split, by id; non-owning pointers into data_.
+    // Non-owning pointers into data_.
     std::map<int, const HoldoutData*> holdouts_by_id_;
     // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
     std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
