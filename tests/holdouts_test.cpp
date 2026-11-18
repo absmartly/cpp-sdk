@@ -1843,3 +1843,47 @@ TEST_CASE("Holdouts: a refresh during variable_value does not re-walk the candid
     for (const auto& exposure : logger->exposures) names.push_back(exposure["name"]);
     REQUIRE(names == std::vector<std::string>{"exp_first", "exp_second"});
 }
+
+TEST_CASE("Holdouts: decoding into reused models replaces holdouts and holdoutIds", "[holdouts][json]") {
+    ContextData data;
+    json::parse(R"({"experiments":[],"holdouts":[{"id":11,"split":[0.1,0.9]}]})").get_to(data);
+    REQUIRE(data.holdouts.size() == 1);
+    json::parse(R"({"experiments":[],"holdouts":[]})").get_to(data);
+    REQUIRE(data.holdouts.empty());
+    json::parse(R"({"experiments":[],"holdouts":[{"id":11,"split":[0.1,0.9]}]})").get_to(data);
+    json::parse(R"({"experiments":[]})").get_to(data);
+    REQUIRE(data.holdouts.empty());
+
+    ExperimentData experiment;
+    const auto with_ids = json::parse(R"({"id":1,"name":"e","unitType":"u","iteration":1,"seedHi":0,"seedLo":0,
+                                          "holdoutIds":[11]})");
+    auto without_ids = with_ids;
+    without_ids["holdoutIds"] = json::array();
+    with_ids.get_to(experiment);
+    REQUIRE(experiment.holdoutIds == std::vector<int>{11});
+    without_ids.get_to(experiment);
+    REQUIRE(experiment.holdoutIds.empty());
+}
+
+TEST_CASE("Holdouts: integer and float spellings of a large seed read the same", "[holdouts][json]") {
+    // (9007199254740993 | 0) === 0 in JS: the integer rounds to 9007199254740992 first.
+    const auto integer = json::parse(R"({"id": 11, "seedHi": 9007199254740993})").get<HoldoutData>();
+    const auto floating = json::parse(R"({"id": 11, "seedHi": 9007199254740993.0})").get<HoldoutData>();
+    REQUIRE(integer.seedHi == 0);
+    REQUIRE(floating.seedHi == 0);
+}
+
+TEST_CASE("Holdouts: cached variable reads do not capture candidate names", "[holdouts][cost]") {
+    auto first = new_experiment(1, "first_experiment_with_a_long_name");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"number":1})"}};
+    auto second = new_experiment(2, "second_experiment_with_a_long_name");
+    second.variants = {{"A", R"({"number":0})"}, {"B", R"({"number":42})"}};
+    Context context(config_with(UID), data_of({}, {first, second}));
+    const std::string key = "number";
+    const json fallback = 0;
+    REQUIRE(context.variable_value(key, fallback) == 42);
+    REQUIRE(allocations_of([&] {
+        for (int i = 0; i < 10; ++i) context.variable_value(key, fallback);
+    }) == 0);
+}
