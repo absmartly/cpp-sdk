@@ -221,6 +221,7 @@ inline void from_json(const nlohmann::json& j, ExperimentData& e) {
         j.at("assignmentRules").get_to(e.assignmentRules);
     }
     if (j.contains("holdoutIds") && j["holdoutIds"].is_array()) {
+        e.holdoutIds.clear();
         for (const auto& id : j["holdoutIds"]) {
             int value = 0;
             if (detail::get_int(id, value)) {
@@ -310,6 +311,7 @@ inline void to_json(nlohmann::json& j, const ContextData& c) {
 inline void from_json(const nlohmann::json& j, ContextData& c) {
     j.at("experiments").get_to(c.experiments);
     // A malformed holdout entry is skipped on its own; it never fails the context.
+    c.holdouts.clear();
     if (j.contains("holdouts") && j["holdouts"].is_array()) {
         for (const auto& entry : j["holdouts"]) {
             if (!entry.is_object()) {

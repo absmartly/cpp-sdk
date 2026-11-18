@@ -320,8 +320,10 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
     // A held-out unit reads the control value, not the caller's default, when nothing
     // else wins. The first suppressed candidate is kept even if it lacks the key, so a
     // later one cannot win (javascript-sdk _resolveVariableValue).
-    const std::map<std::string, nlohmann::json>* suppressed_fallback = nullptr;
+    bool has_suppressed_fallback = false;
+    std::optional<nlohmann::json> suppressed_fallback;
 
+    const int data_seq = data_seq_;
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name);
@@ -330,6 +332,12 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             if (!assignment.exposed) {
                 assignment.exposed = true;
                 trigger_exposures(experiment_name, assignment);
+                // An event logger that refreshed the context has replaced the index this
+                // loop walks; resolve again against the new data. Exposures already
+                // queued are not repeated.
+                if (data_seq_ != data_seq) {
+                    return variable_value(key, default_value);
+                }
             }
 
             if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
@@ -338,17 +346,18 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             }
 
             if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
-                suppressed_fallback == nullptr) {
-                suppressed_fallback = &assignment.variables;
+                !has_suppressed_fallback) {
+                has_suppressed_fallback = true;
+                auto it = assignment.variables.find(key);
+                if (it != assignment.variables.end()) {
+                    suppressed_fallback = it->second;
+                }
             }
         }
     }
 
-    if (suppressed_fallback != nullptr) {
-        auto it = suppressed_fallback->find(key);
-        if (it != suppressed_fallback->end()) {
-            return it->second;
-        }
+    if (suppressed_fallback.has_value()) {
+        return *suppressed_fallback;
     }
 
     return default_value;
@@ -660,8 +669,10 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
+            // The unit type is compared too: the holdout pins were resolved with it.
             if (existing.overridden && existing.variant == overrides_[experiment_name] &&
-                (experiment == nullptr || holdouts_match(*experiment, existing))) {
+                (experiment == nullptr ||
+                 (existing.unit_type == experiment->data->unitType && holdouts_match(*experiment, existing)))) {
                 return existing;
             }
         } else if (experiment == nullptr) {
