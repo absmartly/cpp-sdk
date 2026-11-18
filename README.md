@@ -436,16 +436,25 @@ in the Web Console and arrive with the context data
   (a three-way split) also holds the unit out at arm 1, but only of covered
   experiments that are not full-on; full-on experiments keep their full-on
   variant there. Any other arm leaves the experiment to its normal assignment.
-- A unit held out by any one of an experiment's holdouts gets variant 0, with
-  the control variant's variables, and the experiment publishes no exposure of
-  its own. A holdout beats audience targeting, full-on and custom assignments.
-  `set_override()` and a matching assignment rule still win over it.
+- A unit held out by any one of an experiment's holdouts gets variant 0, and
+  the experiment publishes no exposure of its own. A holdout beats audience
+  targeting, full-on and custom assignments. `set_override()` and a matching
+  assignment rule still win over it.
+- For a variable key, an experiment the unit is assigned to (or overridden or
+  rule-assigned in) wins over a held-out one. The held-out experiment's
+  control value is the fallback when no other experiment wins the key.
 - The first `treatment()` or `variable_value()` on a covered experiment also
   publishes one exposure for each covering holdout (its id, name and arm), once
   per holdout and unit type. `peek()` and `peek_variable_value()` publish
   nothing.
 - The arm is kept until the holdout's iteration changes; other edits to the
   holdout do not re-randomise the unit.
+- Set the unit of each covered experiment's unit type before the first
+  `treatment()` or `variable_value()` on it. Without the unit the holdout
+  cannot be evaluated, and an experiment already exposed that way keeps its
+  decision (so it never publishes a second, conflicting exposure). A `peek()`
+  or `peek_variable_value()` before the unit is set is fine: the decision is
+  made again once the unit arrives.
 
 Payloads without holdouts behave exactly as before.
 
