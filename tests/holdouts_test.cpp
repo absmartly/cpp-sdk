@@ -1712,6 +1712,9 @@ TEST_CASE("Holdouts: an out-of-range or non-integral iteration keeps its default
 
     // Beyond 2^53 JS holds the integer as a rounded double first:
     // (9007199254740995 | 0) === 4 and (18446744073709551615 | 0) === 0.
+    // Below -2^53 too: (-9007199254740995 | 0) === -4.
+    REQUIRE(json::parse(R"({"id": 11, "seedHi": -9007199254740995})").get<HoldoutData>().seedHi == -4);
+
     const auto huge = json::parse(R"({"id": 11, "seedHi": 9007199254740995, "seedLo": 18446744073709551615})")
                           .get<HoldoutData>();
     REQUIRE(huge.seedHi == 4);
@@ -1737,6 +1740,26 @@ TEST_CASE("Holdout arms: only a 3-arm split gives arm 1 its full-on-only meaning
 
 // --- Review follow-ups ----------------------------------------------------------------------------
 
+TEST_CASE("Holdouts: a logger that refreshes on every exposure cannot make variable_value recurse",
+          "[holdouts][variables][refresh]") {
+    // Each refresh brings a new data set with a fresh, unexposed candidate; the lookup gives up
+    // after one retry instead of walking (and exposing) without bound.
+    int generation = 0;
+    const auto data_for = [](int n) {
+        auto experiment = with_variables(new_experiment(1, "exp_gen_" + std::to_string(n)), "color");
+        return data_of({}, {experiment});
+    };
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (generation < 1000) context.refresh(data_for(++generation));
+    };
+    Context context(config_with(UID), data_for(0), logger);
+
+    REQUIRE(context.variable_value("color", "default") == "default");
+    REQUIRE(context.pending() == 2);
+    REQUIRE(generation == 2);
+}
+
 TEST_CASE("Holdouts: a logger that refreshes during variable_value does not invalidate the walk",
           "[holdouts][variables][refresh]") {
     // The first candidate is suppressed; its holdout exposure's logger refreshes with data that
@@ -1757,6 +1780,18 @@ TEST_CASE("Holdouts: a logger that refreshes during variable_value does not inva
     REQUIRE(context.variable_value("color", "default") == "treatment");
     require_published(context, {holdout_exposure(11, "holdout_a", 0),
                                 own_exposure(2, "exp_second_assigned", NORMAL_VARIANT)});
+}
+
+TEST_CASE("Holdouts: an uncovered override is kept across a unit type change, as in JS", "[holdouts][refresh]") {
+    ContextConfig config;
+    config.units = {{UNIT_TYPE, UID}, {"user_id", UID_NOT_HELD_OUT}};
+    config.overrides["exp_override_plain"] = 1;
+    Context context(config, data_of({}, {new_experiment(1, "exp_override_plain")}));
+
+    REQUIRE(context.treatment("exp_override_plain") == 1);
+    context.refresh(data_of({}, {new_experiment(1, "exp_override_plain", "user_id", 0)}));
+    REQUIRE(context.treatment("exp_override_plain") == 1);
+    REQUIRE(context.pending() == 1);
 }
 
 TEST_CASE("Holdouts: an override re-resolves when a refresh changes the covered unit type", "[holdouts][refresh]") {

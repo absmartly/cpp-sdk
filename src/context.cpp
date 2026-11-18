@@ -311,6 +311,11 @@ int Context::peek(const std::string& experiment_name) {
 
 nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
     check_ready(true);
+    return resolve_variable_value(key, default_value, true);
+}
+
+nlohmann::json Context::resolve_variable_value(const std::string& key, const nlohmann::json& default_value,
+                                               bool retry_on_refresh) {
 
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
@@ -333,10 +338,11 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
                 assignment.exposed = true;
                 trigger_exposures(experiment_name, assignment);
                 // An event logger that refreshed the context has replaced the index this
-                // loop walks; resolve again against the new data. Exposures already
-                // queued are not repeated.
+                // loop walks; resolve once more against the new data. A second refresh
+                // during that pass ends the lookup with the default, so a logger that
+                // refreshes on every exposure cannot recurse without bound.
                 if (data_seq_ != data_seq) {
-                    return variable_value(key, default_value);
+                    return retry_on_refresh ? resolve_variable_value(key, default_value, false) : default_value;
                 }
             }
 
@@ -669,10 +675,12 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
-            // The unit type is compared too: the holdout pins were resolved with it.
+            // A covered override also compares the unit type its holdout pins were resolved
+            // with. Without holdouts the override is kept across a unit type change, as in JS.
             if (existing.overridden && existing.variant == overrides_[experiment_name] &&
                 (experiment == nullptr ||
-                 (existing.unit_type == experiment->data->unitType && holdouts_match(*experiment, existing)))) {
+                 (holdouts_match(*experiment, existing) &&
+                  (!existing.holdouts || existing.unit_type == experiment->data->unitType)))) {
                 return existing;
             }
         } else if (experiment == nullptr) {
