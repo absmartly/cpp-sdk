@@ -1863,6 +1863,20 @@ TEST_CASE("Holdouts: decoding into reused models replaces holdouts and holdoutId
     REQUIRE(experiment.holdoutIds == std::vector<int>{11});
     without_ids.get_to(experiment);
     REQUIRE(experiment.holdoutIds.empty());
+
+    // Omitted, null or not an array: also no coverage, as with ContextData::holdouts.
+    for (const char* ids : {"absent", "null", "\"11\""}) {
+        auto payload = with_ids;
+        payload["holdoutType"] = "full";
+        payload.get_to(experiment);
+        REQUIRE(experiment.holdoutIds == std::vector<int>{11});
+        REQUIRE(experiment.holdoutType == "full");
+        auto next = with_ids;
+        if (std::string(ids) == "absent") next.erase("holdoutIds"); else next["holdoutIds"] = json::parse(ids);
+        next.get_to(experiment);
+        REQUIRE(experiment.holdoutIds.empty());
+        REQUIRE(experiment.holdoutType.empty());
+    }
 }
 
 TEST_CASE("Holdouts: integer and float spellings of a large seed read the same", "[holdouts][json]") {

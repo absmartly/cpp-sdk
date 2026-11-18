@@ -220,8 +220,11 @@ inline void from_json(const nlohmann::json& j, ExperimentData& e) {
     if (j.contains("assignmentRules") && j["assignmentRules"].is_string()) {
         j.at("assignmentRules").get_to(e.assignmentRules);
     }
+    // Coverage is replaced on every decode, so a model decoded again from a payload without
+    // holdouts never keeps stale coverage (unlike the older optional fields).
+    e.holdoutIds.clear();
+    e.holdoutType.clear();
     if (j.contains("holdoutIds") && j["holdoutIds"].is_array()) {
-        e.holdoutIds.clear();
         for (const auto& id : j["holdoutIds"]) {
             int value = 0;
             if (detail::get_int(id, value)) {
