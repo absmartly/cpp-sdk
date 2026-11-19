@@ -1090,7 +1090,6 @@ TEST_CASE("Switchback parity: traffic follows the serving unit hash", "[switchba
         ClockScope clock(ANCHOR);
         auto log = std::make_shared<ExposureLog>();
         Context context(units({{STORE, "s1"}, {DEVICE, "device-" + std::to_string(u)}}), data_of({sb, twin}), log);
-        // Only the device unit has a value, so it serves.
         context.set_attribute("geo", {{"city", "Porto"}});
         context.treatment("exp_unit");
         const bool twin_eligible = log->exposures[0].eligible;

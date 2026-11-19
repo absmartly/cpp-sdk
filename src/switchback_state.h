@@ -3,7 +3,6 @@
 #include "absmartly/context.h"
 #include "switchback_internal.h"
 
-#include <list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -46,16 +45,15 @@ struct SwitchbackState {
 
     std::map<std::string, Epoch, std::less<>> epochs;
     uint64_t generation_counter = 0;
-    // Reinsert extracted nodes into owning containers before returning to the caller: references
-    // obtained before extraction are usable again only after insertion, not in a node handle.
-    std::list<Slots> retired;
-    std::list<std::map<std::string, Assignment>> retired_assignments;
+    // Extracted nodes are reinserted into owning multimaps: references obtained before extraction
+    // are usable again only after insertion, not while a node handle holds them.
+    std::multimap<int64_t, SwitchbackSlot> retired;
+    std::multimap<std::string, Assignment> retired_assignments;
 
-    template <typename Map>
-    static void retire(Map& map, typename Map::iterator it, std::list<Map>& parked, bool in_call) {
+    template <typename Map, typename Parked>
+    static void retire(Map& map, typename Map::iterator it, Parked& parked, bool in_call) {
         if (in_call) {
-            parked.emplace_back();
-            parked.back().insert(map.extract(it));
+            parked.insert(map.extract(it));
         } else {
             map.erase(it);
         }

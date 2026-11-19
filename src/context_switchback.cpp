@@ -168,7 +168,6 @@ Assignment& Context::switchback_assignment(const std::string& experiment_name, c
 
     auto& epoch = switchbacks_->epochs[experiment_name];
     if (epoch.generation != switchback.generation) {
-        // A new epoch: every slot of the old definition goes, the one without a period included.
         switchbacks_->drain(epoch, call_depth_ != 0);
         epoch.generation = switchback.generation;
     }

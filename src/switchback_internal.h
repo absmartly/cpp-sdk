@@ -55,4 +55,4 @@ struct SwitchbackIndex {
 
 SwitchbackIndex make_switchback_index(const ExperimentData& experiment);
 
-} // namespace absmartly::internal
+}

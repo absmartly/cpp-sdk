@@ -293,29 +293,16 @@ int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
 
     const auto exp_it = index_.find(experiment_name);
-    const ExperimentIndex* experiment = exp_it != index_.end() ? &exp_it->second : nullptr;
-    if (experiment == nullptr || !experiment->switchback) {
-        // A unit experiment's cached read stays as on the base: the call is counted only when it
-        // exposes, because only an event logger can call back in and drop state.
-        auto& assignment = get_or_create_assignment(experiment_name, experiment);
-        if (assignment.exposed) {
-            return assignment.variant;
-        }
-        const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
-        assignment.exposed = true;
-        trigger_exposures(experiment_name, assignment, std::nullopt);
+    std::optional<int64_t> now;
+    auto& assignment =
+        get_or_create_assignment(experiment_name, exp_it != index_.end() ? &exp_it->second : nullptr, now);
+    if (assignment.exposed) {
         return assignment.variant;
     }
-
+    // Only an exposure runs the event logger, which may call back in and drop state.
     const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
-    std::optional<int64_t> now;
-    auto& assignment = get_or_create_assignment(experiment_name, experiment, now);
-
-    if (!assignment.exposed) {
-        assignment.exposed = true;
-        trigger_exposures(experiment_name, assignment, now);
-    }
-
+    assignment.exposed = true;
+    trigger_exposures(experiment_name, assignment, now);
     return assignment.variant;
 }
 
@@ -363,16 +350,16 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             name = &remaining[next++];
         }
 
-        // Before the first exposure the candidate's index entry is live; afterwards the walk
-        // resolves the captured name against the current data.
         auto& assignment = captured ? get_or_create_assignment(*name, now)
                                     : get_or_create_assignment(*name, candidates[i], now);
 
-        if (assignment.has_variables) {
-            // Like java-sdk, a switchback that is not assigned (a strict audience mismatch) gives
-            // way on a variable key without recording an exposure.
-            if (!assignment.exposed && (!assignment.switchback || assignment.assigned ||
-                                        assignment.overridden || assignment.rule_override)) {
+        // A switchback that wins the key (assigned, overridden or rule-won) is selected before
+        // its config is read, as in java-sdk, even when its variant has no config slot; one that
+        // is not assigned (a strict audience mismatch) gives way without an exposure.
+        const bool switchback_winner = assignment.switchback &&
+            (assignment.assigned || assignment.overridden || assignment.rule_override);
+        if (assignment.has_variables || switchback_winner) {
+            if (!assignment.exposed && (!assignment.switchback || switchback_winner)) {
                 if (!captured) {
                     // The current name is copied too, since a refresh may free the index
                     // entry that owns it; the walk resumes after it.
@@ -391,8 +378,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             if (assignment.assigned || assignment.overridden || assignment.rule_override) {
                 const auto value = assignment.variables.find(key);
                 if (value != assignment.variables.end()) return value->second;
-                // Java selects the switchback winner before reading its config. Unit experiments
-                // retain the existing C++ fallthrough behaviour.
+                // Unit experiments keep the existing C++ fallthrough.
                 if (assignment.switchback) return default_value;
             }
 
@@ -428,13 +414,14 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name, experiment_index, now);
+        const bool switchback_winner = assignment.switchback &&
+            (assignment.assigned || assignment.overridden || assignment.rule_override);
 
-        if (assignment.has_variables) {
+        if (assignment.has_variables || switchback_winner) {
             if (assignment.assigned || assignment.overridden || assignment.rule_override) {
                 const auto value = assignment.variables.find(key);
                 if (value != assignment.variables.end()) return value->second;
-                // Java selects the switchback winner before reading its config. Unit experiments
-                // retain the existing C++ fallthrough behaviour.
+                // Unit experiments keep the existing C++ fallthrough.
                 if (assignment.switchback) return default_value;
             }
 
@@ -701,9 +688,9 @@ void Context::refresh(const ContextData& new_data) {
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
     data_ = new_data;
-    build_index();
     hashes_.clear();
     assigners_.clear();
+    build_index();
 
     nlohmann::json refresh_data;
     nlohmann::json refresh_exps = nlohmann::json::array();
@@ -1016,6 +1003,8 @@ void Context::build_index() {
             if (entry.switchback) previous.emplace(name, entry.switchback);
         }
     }
+    // Logged once the new index is complete: an error logger may read the context.
+    std::vector<nlohmann::json> parse_errors;
     ++data_seq_;
     index_.clear();
     index_variables_.clear();
@@ -1070,8 +1059,8 @@ void Context::build_index() {
                             }
                         }
                     } catch (const nlohmann::json::exception& e) {
-                        emit_event("error", {{"message", "Failed to parse variant config for " + exp.name},
-                                             {"error", e.what()}, {"variant", i}});
+                        parse_errors.push_back({{"message", "Failed to parse variant config for " + exp.name},
+                                                {"error", e.what()}, {"variant", i}});
                     }
                 }
             } else if (variant.config.is_object()) {
@@ -1099,6 +1088,10 @@ void Context::build_index() {
                 }
             }
         }
+    }
+
+    for (const auto& error : parse_errors) {
+        emit_event("error", error);
     }
 }
 

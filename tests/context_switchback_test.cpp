@@ -295,7 +295,6 @@ TEST_CASE("Switchback: no linked unit is unassigned and never falls back", "[swi
     }
     REQUIRE(context->pending() == 0);
 
-    // Setting a linked unit later makes the experiment apply.
     context->set_unit(UNIT_TYPE, UID);
     REQUIRE(context->treatment("exp_sb") == EXPECTED_2_ARMS[2]);
     REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", EXPECTED_2_ARMS[2], ANCHOR + 2 * HOUR)}));
@@ -970,7 +969,6 @@ TEST_CASE("Switchback: every identity transition is a new epoch", "[switchback][
         REQUIRE(context->treatment("exp_sb") == EXPECTED_2_ARMS[0]);
         REQUIRE(context->pending() == 4);
 
-        // An unchanged identity keeps the epoch.
         context->refresh(data_of({switchback(2, HOUR)}));
         context->treatment("exp_sb");
         REQUIRE(context->pending() == 4);
@@ -1293,7 +1291,6 @@ TEST_CASE("Switchback: a slot a logger drops mid-call is parked until the call r
     logger->on_exposure = [&](Context& context) {
         if (refreshed) return;
         refreshed = true;
-        // The switchback becomes a unit experiment: its slot (still held by the caller) is dropped.
         context.refresh(data_of({unit}));
         parked_during_call = ContextTestAccess::retired_slots(context);
     };
@@ -1358,8 +1355,6 @@ TEST_CASE("Switchback: a unit assignment a logger drops mid-exposure is parked u
     logger->on_exposure = [&](Context& context) {
         if (refreshed) return;
         refreshed = true;
-        // The unit experiment becomes a switchback: its cached unit assignment, still held by the
-        // outer treatment(), is dropped.
         context.refresh(data_of({switchback(2, HOUR)}));
         parked_during_call = ContextTestAccess::retired_assignments(context);
     };
@@ -1380,4 +1375,39 @@ TEST_CASE("Switchback: a malformed allow-list entry admits nothing", "[switchbac
     auto context = create(data_of({experiment}));
     REQUIRE(context->treatment("exp_sb") == 0);
     REQUIRE(context->pending() == 0);
+}
+
+TEST_CASE("Switchback: a refresh error logger sees the switchback, not a unit experiment", "[switchback][context][reentrancy]") {
+    ClockScope clock(ANCHOR + HOUR + 5);
+    auto full_on = switchback(1, "sb", 2, HOUR);
+    full_on.unitType = "u";
+    full_on.fullOnVariant = 1;
+    auto broken = as_unit(switchback(2, "broken", 2, HOUR));
+    broken.variants[0].config = "{";
+    struct ErrorLogger : ContextEventLogger {
+        int reads = 0;
+        void handle_event(Context& context, const std::string& type, const json&) override {
+            if (type == "error" && reads++ == 0) context.treatment("sb");
+        }
+    };
+    auto logger = std::make_shared<ErrorLogger>();
+    auto context = create(data_of({}), units({{UNIT_TYPE, UID}, {"u", "x"}}), logger);
+    context->refresh(data_of({full_on, broken}));
+    REQUIRE(logger->reads == 1);
+    REQUIRE(context->treatment("sb") == 1);
+    REQUIRE(published(*context) == json::array({store_exposure(1, "sb", 1, ANCHOR + HOUR + 5, {true, true, false, true})}));
+}
+
+TEST_CASE("Switchback: an overridden winner without a config slot keeps a shared key", "[switchback][context][variables]") {
+    ClockScope clock(ANCHOR + 5);
+    auto sb = switchback(2, HOUR);
+    auto later = as_unit(switchback(2, "later", 2, HOUR));
+    later.variants = {{"A", R"({"sb.arm":10})"}, {"B", R"({"sb.arm":11})"}};
+    later.fullOnVariant = 1;
+    auto context = create(data_of({sb, later}));
+    context->set_override("exp_sb", 9);
+    REQUIRE(context->peek_variable_value("sb.arm", -1) == -1);
+    REQUIRE(context->pending() == 0);
+    REQUIRE(context->variable_value("sb.arm", -1) == -1);
+    REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", 9, ANCHOR + 5, OVERRIDDEN)}));
 }

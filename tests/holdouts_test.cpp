@@ -2027,9 +2027,11 @@ TEST_CASE("Switchback cost: a cached read revalidates once after an unrelated at
     context.set_attribute("city", "Lisboa");
     const int variant = context.treatment("exp_sb");
     context.set_attribute("unrelated", 1);
-    REQUIRE(context.treatment("exp_sb") == variant);
+    int read = -1;
+    // The first read after the write re-evaluates the split rule, which allocates.
+    REQUIRE(allocations_of([&] { read = context.treatment("exp_sb"); }) > 0);
+    REQUIRE(read == variant);
     for (int i = 0; i < 3; ++i) {
-        int read = -1;
         REQUIRE(allocations_of([&] { read = context.treatment("exp_sb"); }) == 0);
         REQUIRE(read == variant);
     }

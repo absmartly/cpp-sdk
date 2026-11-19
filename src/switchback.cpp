@@ -65,7 +65,7 @@ std::vector<int> fisher_yates(int arm_count, uint32_t base) {
     return permutation;
 }
 
-} // namespace
+}
 
 int assign_switchback(const std::string& cluster_unit, int64_t period_index, int64_t seed, int arm_count) {
     require_arms(arm_count);
@@ -246,6 +246,6 @@ SwitchbackIndex make_switchback_index(const ExperimentData& experiment) {
     return index;
 }
 
-} // namespace internal
+}
 
-} // namespace absmartly
+}
