@@ -67,6 +67,8 @@ struct SwitchbackState {
     void drain(Epoch& epoch, bool in_call) {
         while (!epoch.slots.empty()) drop(epoch.slots, epoch.slots.begin(), in_call);
     }
+    // Out of line: the teardown of parked maps stays off the callers' inlined fast path.
+    void release_retired();
 };
 
 // Counts a treatment() or variable_value() call in progress. The count lives on the Context,
@@ -78,9 +80,8 @@ public:
         ++depth_;
     }
     ~SwitchbackCallGuard() {
-        if (--depth_ == 0 && state_) {
-            state_->retired.clear();
-            state_->retired_assignments.clear();
+        if (--depth_ == 0 && state_ && !(state_->retired.empty() && state_->retired_assignments.empty())) {
+            state_->release_retired();
         }
     }
     SwitchbackCallGuard(const SwitchbackCallGuard&) = delete;

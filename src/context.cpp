@@ -291,10 +291,25 @@ void Context::set_custom_assignments(const std::map<std::string, int>& assignmen
 
 int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
-    const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
 
+    const auto exp_it = index_.find(experiment_name);
+    const ExperimentIndex* experiment = exp_it != index_.end() ? &exp_it->second : nullptr;
+    if (experiment == nullptr || !experiment->switchback) {
+        // A unit experiment's cached read stays as on the base: the call is counted only when it
+        // exposes, because only an event logger can call back in and drop state.
+        auto& assignment = get_or_create_assignment(experiment_name, experiment);
+        if (assignment.exposed) {
+            return assignment.variant;
+        }
+        const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
+        assignment.exposed = true;
+        trigger_exposures(experiment_name, assignment, std::nullopt);
+        return assignment.variant;
+    }
+
+    const internal::SwitchbackCallGuard guard(call_depth_, switchbacks_);
     std::optional<int64_t> now;
-    auto& assignment = get_or_create_assignment(experiment_name, now);
+    auto& assignment = get_or_create_assignment(experiment_name, experiment, now);
 
     if (!assignment.exposed) {
         assignment.exposed = true;
@@ -348,7 +363,10 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             name = &remaining[next++];
         }
 
-        auto& assignment = get_or_create_assignment(*name, now);
+        // Before the first exposure the candidate's index entry is live; afterwards the walk
+        // resolves the captured name against the current data.
+        auto& assignment = captured ? get_or_create_assignment(*name, now)
+                                    : get_or_create_assignment(*name, candidates[i], now);
 
         if (assignment.has_variables) {
             // Like java-sdk, a switchback that is not assigned (a strict audience mismatch) gives
@@ -409,7 +427,7 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
     std::optional<int64_t> now;
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
-        auto& assignment = get_or_create_assignment(experiment_name, now);
+        auto& assignment = get_or_create_assignment(experiment_name, experiment_index, now);
 
         if (assignment.has_variables) {
             if (assignment.assigned || assignment.overridden || assignment.rule_override) {

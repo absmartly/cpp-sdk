@@ -245,6 +245,8 @@ private:
     // Switchback experiments (src/context_switchback.cpp). A call reads the clock at most once,
     // when it first meets a switchback, and resolves and exposes every switchback at that reading.
     Assignment& get_or_create_assignment(const std::string& experiment_name, std::optional<int64_t>& now);
+    Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment,
+                                         std::optional<int64_t>& now);
     Assignment& switchback_assignment(const std::string& experiment_name, const ExperimentIndex& experiment,
                                       int64_t now);
     void resolve_switchback(internal::SwitchbackSlot& slot, const ExperimentIndex& experiment, int64_t period);

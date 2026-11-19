@@ -36,6 +36,11 @@ std::string audience_string(const nlohmann::json& audience) {
 
 }
 
+void SwitchbackState::release_retired() {
+    retired.clear();
+    retired_assignments.clear();
+}
+
 void Context::index_switchbacks(const std::map<std::string, std::shared_ptr<SwitchbackIndex>>& previous) {
     for (auto& [name, entry] : index_) {
         if (!is_switchback(*entry.data)) continue;
@@ -69,7 +74,11 @@ void Context::index_switchbacks(const std::map<std::string, std::shared_ptr<Swit
 
 Assignment& Context::get_or_create_assignment(const std::string& experiment_name, std::optional<int64_t>& now) {
     const auto it = index_.find(experiment_name);
-    const ExperimentIndex* experiment = it != index_.end() ? &it->second : nullptr;
+    return get_or_create_assignment(experiment_name, it != index_.end() ? &it->second : nullptr, now);
+}
+
+Assignment& Context::get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment,
+                                              std::optional<int64_t>& now) {
     if (experiment != nullptr && experiment->switchback) {
         if (!now) now = internal::now_millis();
         return switchback_assignment(experiment_name, *experiment, *now);
