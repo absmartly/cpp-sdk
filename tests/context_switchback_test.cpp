@@ -1411,3 +1411,16 @@ TEST_CASE("Switchback: an overridden winner without a config slot keeps a shared
     REQUIRE(context->variable_value("sb.arm", -1) == -1);
     REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", 9, ANCHOR + 5, OVERRIDDEN)}));
 }
+
+TEST_CASE("Switchback: a cached read after a same-rules refresh stamps the rules memo", "[switchback][context][cost]") {
+    ClockScope clock(ANCHOR + 5);
+    auto experiment = switchback(2, HOUR);
+    experiment.assignmentRules = ASSIGN_VARIANT_1;
+    auto context = create(data_of({experiment}));
+    REQUIRE(context->treatment("exp_sb") == 1);
+    context->refresh(data_of({experiment}));
+    REQUIRE_FALSE(ContextTestAccess::rules_checked_this_load(*context, "exp_sb"));
+    REQUIRE(context->treatment("exp_sb") == 1);
+    REQUIRE(ContextTestAccess::rules_checked_this_load(*context, "exp_sb"));
+    REQUIRE(context->pending() == 1);
+}

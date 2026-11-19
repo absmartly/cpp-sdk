@@ -138,6 +138,13 @@ struct ContextTestAccess {
         return n;
     }
     static bool has_switchback_state(Context& context) { return context.switchbacks_ != nullptr; }
+    // Whether the current slot's rules string was last compared against the current data load.
+    static bool rules_checked_this_load(Context& context, const std::string& name) {
+        const auto index = context.index_.find(name);
+        const auto epoch = context.switchbacks_->epochs.find(name);
+        const auto slot = epoch->second.slots.find(index->second.switchback->period(internal::now_millis()));
+        return slot->second.assignment.rule_data_seq == context.data_seq_;
+    }
     // Slots dropped while a call was in progress, parked until the outermost call returns.
     static size_t retired_slots(Context& context) {
         return context.switchbacks_ ? context.switchbacks_->retired.size() : 0;
