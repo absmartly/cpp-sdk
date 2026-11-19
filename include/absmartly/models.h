@@ -106,7 +106,7 @@ inline constexpr std::pair<const char*, std::optional<int64_t> ExperimentData::*
     {"switchbackBurnOutDurationMs", &ExperimentData::switchbackBurnOutDurationMs},
 };
 
-} // namespace detail
+}
 
 inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     j = nlohmann::json{
