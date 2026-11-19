@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/client.h>
+#include "switchback_support.h"
 
 using namespace absmartly;
 
@@ -52,9 +53,43 @@ TEST_CASE("Switchback client: a fetched payload keeps each cluster map in its se
     REQUIRE(keys == std::vector<std::string>{"user_id", "device_id", "store_id"});
 }
 
+TEST_CASE("Switchback: malformed known fields stay forward compatible", "[switchback][models][compat]") {
+    const auto payload = nlohmann::ordered_json::parse(
+        R"({"experiments":[{"id":1,"name":"sb","unitType":"store_id","iteration":1,"seedHi":0,"seedLo":0,"split":[0.5,0.5],"trafficSplit":[0,1],"variants":[{"name":"A","config":null},{"name":"B","config":null}],"randomizationType":"switchback","switchbackClusters":{"store_id":"city"},"switchbackClusterValues":"not-an-array","switchbackStartAt":"soon","switchbackPeriodMs":1.5,"switchbackEstimand":{"future":true}},{"id":2,"name":"unit","unitType":"store_id","iteration":1,"seedHi":0,"seedLo":0,"split":[0.5,0.5],"trafficSplit":[0,1],"variants":[{"name":"A","config":null},{"name":"B","config":null}]}]})");
+    Client client(config(), std::make_shared<PayloadHTTPClient>(payload.dump()));
+    const auto data = client.get_context_data().get();
+    struct Log : ContextEventLogger {
+        int errors = 0;
+        void handle_event(Context&, const std::string& type, const nlohmann::json&) override {
+            if (type == "error") ++errors;
+        }
+    };
+    auto log = std::make_shared<Log>();
+    ContextConfig cfg;
+    cfg.units["store_id"] = "u";
+    Context context(cfg, data, log);
+    REQUIRE(context.is_ready());
+    REQUIRE_FALSE(context.is_failed());
+    context.set_attribute("city", "Porto");
+    REQUIRE(context.treatment("sb") == 0);
+    context.treatment("unit");
+    const auto event = context.publish();
+    REQUIRE(event.exposures.size() == 1);
+    REQUIRE(event.exposures[0].name == "unit");
+    REQUIRE(event.exposures[0].assigned);
+    REQUIRE(log->errors == 0);
+    REQUIRE(data.experiments.size() == 2);
+    REQUIRE(data.experiments[0].switchbackClusters.is_object());
+    REQUIRE_FALSE(data.experiments[0].switchbackClusterValues.has_value());
+    REQUIRE_FALSE(data.experiments[0].switchbackStartAt.has_value());
+    REQUIRE_FALSE(data.experiments[0].switchbackPeriodMs.has_value());
+    REQUIRE(data.experiments[0].switchbackEstimand.empty());
+    REQUIRE(data.experiments[1].name == "unit");
+}
+
 TEST_CASE("Switchback client: a payload without switchbacks decodes as before", "[switchback][client]") {
     Client client(config(), std::make_shared<PayloadHTTPClient>(
-                                R"({"experiments":[{"id":1,"name":"e","unitType":"u","iteration":1,"seedHi":0,"seedLo":0}]})"));
+        R"({"experiments":[{"id":1,"name":"e","unitType":"u","iteration":1,"seedHi":0,"seedLo":0}]})"));
     const auto data = client.get_context_data().get();
     REQUIRE(data.experiments.size() == 1);
     REQUIRE(data.experiments[0].switchbackClusters.is_null());
