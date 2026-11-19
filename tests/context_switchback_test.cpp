@@ -1332,3 +1332,52 @@ TEST_CASE("Switchback: an assigned winner whose arm omits a shared key returns t
     REQUIRE(context->variable_value("sb.arm", -1) == -1);
     REQUIRE(published(*context) == json::array({store_exposure(1, "exp_sb", 0, ANCHOR)}));
 }
+
+TEST_CASE("Switchback: a split rule revalidates over the serving unit, not unitType", "[switchback][context][rules]") {
+    ClockScope clock(ANCHOR + 5);
+    for (int u = 0; u < 16; ++u) {
+        auto experiment = switchback(2, HOUR);
+        experiment.unitType = "user_id";
+        experiment.assignmentRules = R"({"rules":[{"type":"split","environments":[],"percentages":"50/50"}]})";
+        const std::string store = "store-" + std::to_string(u);
+        auto context = create(data_of({experiment}), units({{UNIT_TYPE, store}, {"user_id", "user-" + std::to_string(u)}}));
+        const int variant = context->treatment("exp_sb");
+        context->set_attribute("unrelated", u);
+        REQUIRE(context->treatment("exp_sb") == variant);
+        REQUIRE(context->pending() == 1);
+    }
+}
+
+TEST_CASE("Switchback: a unit assignment a logger drops mid-exposure is parked until the call returns",
+          "[switchback][context][reentrancy]") {
+    ClockScope clock(ANCHOR + 5);
+    auto unit = as_unit(switchback(2, HOUR));
+    auto logger = std::make_shared<ExposureLog>();
+    size_t parked_during_call = 0;
+    bool refreshed = false;
+    logger->on_exposure = [&](Context& context) {
+        if (refreshed) return;
+        refreshed = true;
+        // The unit experiment becomes a switchback: its cached unit assignment, still held by the
+        // outer treatment(), is dropped.
+        context.refresh(data_of({switchback(2, HOUR)}));
+        parked_during_call = ContextTestAccess::retired_assignments(context);
+    };
+    auto context = create(data_of({switchback(1, "other", 2, HOUR), unit}), units({{UNIT_TYPE, UID}}), logger);
+    const int variant = context->treatment("exp_sb");
+    REQUIRE((variant == 0 || variant == 1));
+    REQUIRE(parked_during_call == 1);
+    REQUIRE(ContextTestAccess::retired_assignments(*context) == 0);
+}
+
+TEST_CASE("Switchback: a malformed allow-list entry admits nothing", "[switchback][context][values]") {
+    ClockScope clock(ANCHOR + HOUR + 5);
+    auto payload = json(switchback(2, HOUR));
+    payload["switchbackClusterValues"] = json::array({true});
+    auto experiment = payload.get<ExperimentData>();
+    experiment.switchbackClusters = clusters({{UNIT_TYPE, CLUSTER_PATH}});
+    REQUIRE(EXPECTED_2_ARMS[1] == 1);
+    auto context = create(data_of({experiment}));
+    REQUIRE(context->treatment("exp_sb") == 0);
+    REQUIRE(context->pending() == 0);
+}

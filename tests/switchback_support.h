@@ -142,6 +142,10 @@ struct ContextTestAccess {
     static size_t retired_slots(Context& context) {
         return context.switchbacks_ ? context.switchbacks_->retired.size() : 0;
     }
+    // Unit assignments dropped while a call was in progress.
+    static size_t retired_assignments(Context& context) {
+        return context.switchbacks_ ? context.switchbacks_->retired_assignments.size() : 0;
+    }
 };
 
 }
