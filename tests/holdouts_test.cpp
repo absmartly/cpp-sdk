@@ -2360,3 +2360,74 @@ TEST_CASE("Holdouts: a hash on a split boundary picks the arm JS picks", "[holdo
     REQUIRE(context.treatment("exp_boundary") == NORMAL_VARIANT);
     require_published(context, {own_exposure(1, "exp_boundary", NORMAL_VARIANT), holdout_exposure(11, "holdout_a", 1)});
 }
+
+TEST_CASE("Holdouts: exposed variable reads keep returning control", "[holdouts][variables][cache]") {
+    Context context(config_with(UID),
+                    data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)},
+                            {with_variables(covered_by(new_experiment(1, "exp_held"), {11}), "color")}));
+
+    REQUIRE(context.variable_value("color", "default") == "control");
+    REQUIRE(context.variable_value("color", "default") == "control");
+    REQUIRE(context.peek_variable_value("color", "default") == "control");
+    require_published(context, {holdout_exposure(11, "holdout_a", 0)});
+}
+
+TEST_CASE("Holdouts: nested walks on the same generation retain it until both finish",
+          "[holdouts][logger][refresh][variables]") {
+    auto first = new_experiment(1, "exp_first");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    const auto data = data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color"),
+                                   with_variables(new_experiment(3, "exp_shape"), "shape")});
+    auto logger = std::make_shared<ExposureLog>();
+    json inner;
+    std::vector<size_t> retained;
+    logger->on_exposure = [&](Context& context, const json& event) {
+        if (event["name"] == "exp_first") {
+            inner = context.variable_value("shape", "none");
+            retained.push_back(ContextTestAccess::retired(context));
+        } else if (event["name"] == "exp_shape") {
+            context.refresh(data);
+            retained.push_back(ContextTestAccess::retired(context));
+        }
+    };
+    Context context(config_with(UID), data, logger);
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(inner == "treatment");
+    REQUIRE(retained == std::vector<size_t>{1, 1});
+    REQUIRE(ContextTestAccess::retired(context) == 0);
+}
+
+TEST_CASE("Holdouts: a parse-error logger can replace the payload with an empty one",
+          "[holdouts][logger][refresh][variables]") {
+    const auto good = data_of({}, {with_variables(new_experiment(1, "exp_color"), "color"),
+                                   with_variables(new_experiment(2, "exp_shape"), "shape")});
+    auto bad = good;
+    bad.experiments[0].variants[0].config = "{not json";
+    struct Logger : ContextEventLogger {
+        int errors = 0;
+        void handle_event(Context& context, const std::string& type, const json&) override {
+            if (type == "error") {
+                ++errors;
+                context.refresh(ContextData{});
+            }
+        }
+    };
+    auto logger = std::make_shared<Logger>();
+    Context context(config_with(UID), good, logger);
+    context.refresh(bad);
+
+    REQUIRE(logger->errors == 1);
+    REQUIRE(context.data().experiments.empty());
+    REQUIRE(context.peek_variable_value("color", "default") == "default");
+    REQUIRE(context.variable_value("shape", "default") == "default");
+}
+
+TEST_CASE("Holdouts: a first variable read without a logger does not activate walk tracking",
+          "[holdouts][variables][cost]") {
+    Context context(config_with(UID), data_of({}, {with_variables(new_experiment(1, "exp_color"), "color")}));
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(ContextTestAccess::walk_capacity(context) == 0);
+}

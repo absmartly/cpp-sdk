@@ -4,9 +4,17 @@
 
 #include <iostream>
 #include <string>
+#include <utility>
 
 int main() {
     absmartly::ContextData data;
+    // ContextData had one member in 1.0.0. Existing bindings must keep that shape.
+    auto& [experiments] = data;
+    const auto& [const_experiments] = std::as_const(data);
+    auto [copied_experiments] = data;
+    auto&& [moved_experiments] = std::move(data);
+    if (&experiments != &data.experiments || &const_experiments != &data.experiments ||
+        &moved_experiments != &data.experiments || !copied_experiments.empty()) return 2;
     absmartly::ExperimentData exp;
     exp.id = 1;
     exp.name = "exp";

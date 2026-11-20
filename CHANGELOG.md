@@ -30,8 +30,8 @@
 
 - New fields grow the public model and `Context` layouts; rebuild everything
   that includes the SDK headers when upgrading (see Installed Package in the
-  README). A structured binding of `ContextData` must name the new `holdouts`
-  member. Code that
+  README). `ContextData` preserves its one-element structured-binding shape;
+  access the new `holdouts` member by name. Code that
   aggregate-initializes `ExperimentData` or `ContextData` positionally still
   compiles, but `-Wextra` reports the appended fields as missing initializers.
 

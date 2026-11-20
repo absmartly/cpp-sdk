@@ -8,6 +8,8 @@
 #include <map>
 #include <optional>
 #include <cstdint>
+#include <tuple>
+#include <utility>
 
 namespace absmartly {
 
@@ -304,6 +306,32 @@ struct ContextData {
     std::vector<HoldoutData> holdouts;
 };
 
+// Keep the one-element structured-binding shape published in 1.0.0. New fields remain
+// available by name without changing existing `auto& [experiments] = data` consumers.
+template <std::size_t I>
+decltype(auto) get(ContextData& data) noexcept {
+    static_assert(I == 0, "ContextData has one structured-binding element");
+    return (data.experiments);
+}
+
+template <std::size_t I>
+decltype(auto) get(const ContextData& data) noexcept {
+    static_assert(I == 0, "ContextData has one structured-binding element");
+    return (data.experiments);
+}
+
+template <std::size_t I>
+decltype(auto) get(ContextData&& data) noexcept {
+    static_assert(I == 0, "ContextData has one structured-binding element");
+    return std::move(data.experiments);
+}
+
+template <std::size_t I>
+decltype(auto) get(const ContextData&& data) noexcept {
+    static_assert(I == 0, "ContextData has one structured-binding element");
+    return std::move(data.experiments);
+}
+
 inline void to_json(nlohmann::json& j, const ContextData& c) {
     j = nlohmann::json{{"experiments", c.experiments}};
     if (!c.holdouts.empty()) {
@@ -456,3 +484,15 @@ inline void from_json(const nlohmann::json& j, PublishEvent& p) {
 }
 
 } // namespace absmartly
+
+namespace std {
+
+template <>
+struct tuple_size<absmartly::ContextData> : integral_constant<size_t, 1> {};
+
+template <>
+struct tuple_element<0, absmartly::ContextData> {
+    using type = vector<absmartly::ExperimentData>;
+};
+
+} // namespace std

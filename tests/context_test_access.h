@@ -9,6 +9,7 @@ struct ContextTestAccess {
     static int data_seq(const Context& ctx) { return ctx.data_seq_; }
     static const nlohmann::json& attributes_map(const Context& ctx) { return ctx.get_attributes_map(); }
     static nlohmann::json& attributes_map_cache(Context& ctx) { return ctx.attrs_map_cache_; }
+    static size_t walk_capacity(const Context& ctx) { return ctx.walk_generations_.capacity(); }
     static size_t retired(const Context& ctx) { return ctx.retired_.size(); }
 };
 
