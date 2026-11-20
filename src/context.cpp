@@ -703,6 +703,7 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     bool has_custom = cassignments_.count(experiment_name) > 0;
     bool has_override = overrides_.count(experiment_name) > 0;
     if (experiment == nullptr) {
+        ++index_lookups_;
         auto exp_it = index_.find(experiment_name);
         experiment = (exp_it != index_.end()) ? &exp_it->second : nullptr;
     }

@@ -2465,3 +2465,16 @@ TEST_CASE("Holdouts: a first variable read without a logger does not activate wa
     REQUIRE(context.variable_value("color", "default") == "treatment");
     REQUIRE(ContextTestAccess::walk_capacity(context) == 0);
 }
+
+TEST_CASE("Holdouts: variable reads reuse each candidate's index entry", "[holdouts][variables][cost]") {
+    auto first = new_experiment(1, "exp_first");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    Context context(config_with(UID), data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color")}));
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+
+    const long before = ContextTestAccess::index_lookups(context);
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(context.peek_variable_value("color", "default") == "treatment");
+    REQUIRE(ContextTestAccess::index_lookups(context) == before);
+}
