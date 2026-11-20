@@ -2473,8 +2473,10 @@ TEST_CASE("Holdouts: variable reads reuse each candidate's index entry", "[holdo
     Context context(config_with(UID), data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color")}));
     REQUIRE(context.variable_value("color", "default") == "treatment");
 
-    const long before = ContextTestAccess::index_lookups(context);
+    const auto before = ContextTestAccess::index_lookups(context);
     REQUIRE(context.variable_value("color", "default") == "treatment");
     REQUIRE(context.peek_variable_value("color", "default") == "treatment");
     REQUIRE(ContextTestAccess::index_lookups(context) == before);
+    context.peek("exp_second");
+    REQUIRE(ContextTestAccess::index_lookups(context) == before + 1);
 }

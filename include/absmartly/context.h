@@ -9,6 +9,7 @@
 #include <absmartly/variant_assigner.h>
 #include <absmartly/hashing.h>
 #include <nlohmann/json.hpp>
+#include <cstdint>
 #include <list>
 #include <map>
 #include <utility>
@@ -247,7 +248,7 @@ private:
     std::list<RetiredData> retired_;
     std::vector<int> walk_generations_;
     // Name lookups in get_or_create_assignment(); variable reads reuse their indexed entry.
-    long index_lookups_ = 0;
+    std::uint64_t index_lookups_ = 0;
 
     struct WalkGuard {
         explicit WalkGuard(Context& context) : context_(context) {}
