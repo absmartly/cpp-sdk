@@ -72,8 +72,12 @@ std::future<ContextData> Client::get_context_data() {
         }
 
         std::string body(response.content.begin(), response.content.end());
-        auto j = nlohmann::json::parse(body);
-        return j.get<ContextData>();
+        // nlohmann::json sorts object keys, so a payload with a switchback cluster map, whose
+        // order decides the serving unit, is decoded through ordered_json. Others decode as before.
+        if (body.find("\"switchbackClusters\"") != std::string::npos) {
+            return nlohmann::ordered_json::parse(body).get<ContextData>();
+        }
+        return nlohmann::json::parse(body).get<ContextData>();
     });
 }
 

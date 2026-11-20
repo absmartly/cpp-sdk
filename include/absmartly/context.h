@@ -20,6 +20,13 @@
 
 namespace absmartly {
 
+namespace internal {
+struct SwitchbackIndex;
+struct SwitchbackSlot;
+struct SwitchbackState;
+struct ContextTestAccess;
+}
+
 // A unit's arm in one holdout, cached per (holdout id, unit type) while the
 // holdout's iteration is unchanged. The arm count is pinned with the arm: arm 1
 // means something else in a 2-arm and a 3-arm holdout.
@@ -75,6 +82,8 @@ struct Assignment {
     // The holdouts covering the experiment when this was resolved, in id order;
     // null when there are none. Exposures fire from these, never re-resolved.
     std::shared_ptr<const std::vector<HoldoutPin>> holdouts;
+    // A switchback slot: exposed with the clock reading of the call that exposes it.
+    bool switchback = false;
 };
 
 struct ExperimentIndex {
@@ -83,6 +92,8 @@ struct ExperimentIndex {
     // data->assignmentRules parsed once; null when there are none or they are invalid.
     nlohmann::json assignment_rules;
     std::vector<const HoldoutData*> holdouts; // Sorted by id, unique; non-owning, like data.
+    // Switchback metadata is computed once per data load, preserving cluster order.
+    std::shared_ptr<internal::SwitchbackIndex> switchback;
 };
 
 struct RuleResolution {
@@ -154,9 +165,9 @@ public:
     void refresh(const ContextData& new_data);
 
 private:
-    Assignment& get_or_create_assignment(const std::string& experiment_name);
-    void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
-    void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
+    Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment);
+    void trigger_exposures(const std::string& experiment_name, const Assignment& assignment,
+                           const std::optional<int64_t>& now);
     nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment);
     std::shared_ptr<HoldoutAssignment> get_holdout_assignment(const HoldoutData& holdout, const std::string& unit_type);
     static bool holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment);
@@ -230,6 +241,28 @@ private:
     std::map<int, const HoldoutData*> holdouts_by_id_;
     // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
     std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
+
+    // Switchback experiments (src/context_switchback.cpp). A call reads the clock at most once,
+    // when it first meets a switchback, and resolves and exposes every switchback at that reading.
+    Assignment& get_or_create_assignment(const std::string& experiment_name, std::optional<int64_t>& now);
+    Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment,
+                                         std::optional<int64_t>& now);
+    Assignment& switchback_assignment(const std::string& experiment_name, const ExperimentIndex& experiment,
+                                      int64_t now);
+    void resolve_switchback(internal::SwitchbackSlot& slot, const ExperimentIndex& experiment, int64_t period);
+    nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment,
+                                    int64_t exposed_at);
+    std::optional<RuleResolution> resolve_rule(const ExperimentIndex& experiment, const std::string& unit_type,
+                                               bool unit_pinned_missing);
+    void index_switchbacks(const std::map<std::string, std::shared_ptr<internal::SwitchbackIndex>>& previous);
+    void invalidate_absent_switchbacks();
+    // The SDK's own tests only (tests/switchback_support.h); not API.
+    friend struct internal::ContextTestAccess;
+
+    // Null until the first data load that has a switchback.
+    std::shared_ptr<internal::SwitchbackState> switchbacks_;
+    // treatment() and variable_value() calls in progress, re-entrant ones included.
+    int call_depth_ = 0;
 };
 
-} // namespace absmartly
+}

@@ -17,6 +17,10 @@ add_executable(absmartly_tests
   system_attributes_test.cpp
   assignment_rules_test.cpp
   holdouts_test.cpp
+  switchback_test.cpp
+  context_switchback_test.cpp
+  switchback_cluster_test.cpp
+  switchback_client_test.cpp
   http_integration_test.cpp
 )
 

@@ -150,7 +150,7 @@ int main() {
 int main() {
     std::string json_response = fetch_context_data(); // your HTTP client
 
-    absmartly::ContextData data = nlohmann::json::parse(json_response)
+    absmartly::ContextData data = nlohmann::ordered_json::parse(json_response)
         .get<absmartly::ContextData>();
 
     absmartly::ContextConfig config;
@@ -241,7 +241,7 @@ You provide the context data obtained from your HTTP call to the A/B Smartly col
 absmartly::ContextConfig config;
 config.units = {{"session_id", "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}};
 
-absmartly::ContextData data = nlohmann::json::parse(json_response)
+absmartly::ContextData data = nlohmann::ordered_json::parse(json_response)
     .get<absmartly::ContextData>();
 
 absmartly::Context context(config, data);
@@ -271,7 +271,7 @@ For long-running contexts, experiments started after the context was created wil
 
 ```cpp
 // Fetch fresh context data from the collector
-absmartly::ContextData fresh_data = nlohmann::json::parse(fresh_json_response)
+absmartly::ContextData fresh_data = nlohmann::ordered_json::parse(fresh_json_response)
     .get<absmartly::ContextData>();
 
 context.refresh(fresh_data);
@@ -457,6 +457,72 @@ in the Web Console and arrive with the context data
   made again once the unit arrives.
 
 Payloads without holdouts behave exactly as before.
+
+### Switchback Experiments
+
+A switchback experiment is randomised over *clusters* and time: a cluster is
+the value of a context attribute (a store's region, say), and the cluster's
+variant changes on a fixed time grid. Every unit in a cluster sees the same
+variant within a period. The SDK serves the same contract as the Collector, so
+given the same context data, units, attributes and clock it picks the same
+variant and the same exposure unit. Switchbacks arrive with the context data
+(`ExperimentData::randomizationType == "switchback"` and the `switchback*`
+fields); there is nothing to call.
+
+- `switchbackClusters` maps a unit type to an attribute path, in the served
+  order, and that order decides which unit serves. Decode payloads you fetch
+  yourself with `nlohmann::ordered_json` (the SDK's own client does), since
+  `nlohmann::json` sorts object keys:
+
+  ```cpp
+  absmartly::ContextData data = nlohmann::ordered_json::parse(json_response)
+      .get<absmartly::ContextData>();
+  ```
+
+- For each linked unit type set on the context, in that order, the SDK reads
+  the attribute at the path (`/` separates segments, a quoted segment is a
+  literal key, an integer segment indexes an array; a `.` anywhere makes the
+  path unreadable). Only attributes set with `set_attribute()` are read; the
+  latest one set at or before the call wins. The first unit that gives a value
+  serves, and the value is the cluster key. A non-empty string is used as-is,
+  a JSON integer becomes its base-10 text; every floating-point number
+  (`3.0` included), boolean, object, array, empty string and null gives no
+  value. Set an integer cluster value as an integer, not a double.
+- No linked unit set: the experiment does not apply (variant 0, no exposure).
+  No value, two units that disagree, or a value outside
+  `switchbackClusterValues`: variant 0 and no exposure; only an override still
+  applies.
+- Otherwise the precedence is: override, assignment rule (a `split` rule
+  randomises the serving unit), strict audience mismatch, full-on, then the
+  schedule. Before `switchbackStartAt`, or with an unservable schedule (an
+  anchor that is not hour-aligned, a period that is not positive, fewer than two
+  arms), the result is variant 0 with no exposure. A traffic miss on the serving
+  unit is recorded as ineligible, then a custom assignment, then the draw for
+  the period `floor((now - switchbackStartAt) / switchbackPeriodMs)`.
+- Holdouts never apply to a switchback.
+- For a variable key, the first assigned switchback wins even when its selected
+  arm omits the key: that returns the default, without trying a later experiment
+  (matching java-sdk). Unit experiments keep their existing fallthrough behaviour.
+- An experiment's exposure is queued once per period, under the serving unit,
+  stamped with the time that chose the period. A change that re-queues it in
+  the same period (an audience, rule or custom assignment change) queues
+  another exposure; with a non-strict audience that exposure is for the same
+  cached arm. The cluster is read once per period, at the first read (`peek()`
+  included). **Changing a cluster attribute mid-period is
+  not supported:** the arm cached at that first read stays for the rest of the
+  period, whether the change comes before the exposure or before a re-queued
+  one, and the new value takes effect in the next period. Set cluster
+  attributes before the first read of a period. A refresh
+  that changes the cluster map, the allowed values, the grid or the design
+  starts over; changes to the burn-in, burn-out, carryover and estimand fields
+  do not. The exposure and publish payloads carry no new fields, and attributes
+  are still published with their timestamps.
+- `assign_switchback()` and `switchback_permutation()`
+  (`absmartly/switchback.h`) expose the platform's draw.
+
+Payloads without switchbacks behave exactly as before. SDKs that predate this
+feature serve a sticky unit assignment for a switchback (or nothing), which does
+not match the schedule; upgrade every SDK that serves one.
 
 ### Semantic Version Operators
 

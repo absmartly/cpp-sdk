@@ -2011,3 +2011,28 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
     REQUIRE(allocations_of([&] { context.treatment(name); }) == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
     REQUIRE(logger->exposures == 2);
 }
+
+TEST_CASE("Switchback cost: a cached read revalidates once after an unrelated attribute, then allocates nothing",
+          "[switchback][cost]") {
+    // The slot records the attribute sequence its rules were checked against, so later reads skip
+    // the rule check until another attribute is set.
+    ExperimentData experiment = new_experiment(1, "exp_sb");
+    experiment.randomizationType = "switchback";
+    experiment.switchbackClusters = nlohmann::ordered_json{{UNIT_TYPE, "city"}};
+    experiment.switchbackStartAt = 0;
+    experiment.switchbackPeriodMs = int64_t{1} << 50;
+    // A split rule's action allocates its percentages, so a re-evaluation shows as an allocation.
+    experiment.assignmentRules = R"({"rules":[{"type":"split","environments":[],"percentages":"50/50"}]})";
+    Context context(config_with(UID), data_of({}, {experiment}));
+    context.set_attribute("city", "Lisboa");
+    const int variant = context.treatment("exp_sb");
+    context.set_attribute("unrelated", 1);
+    int read = -1;
+    // The first read after the write re-evaluates the split rule, which allocates.
+    REQUIRE(allocations_of([&] { read = context.treatment("exp_sb"); }) > 0);
+    REQUIRE(read == variant);
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(allocations_of([&] { read = context.treatment("exp_sb"); }) == 0);
+        REQUIRE(read == variant);
+    }
+}

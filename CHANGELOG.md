@@ -13,6 +13,22 @@
   type. Overrides and matching assignment rules win over a holdout. Payloads
   without holdouts assign and publish exactly as before. Ports javascript-sdk#65
   and java-sdk#12.
+- Switchback experiments (R33, cluster-defined), ported from java-sdk#15. New
+  `ExperimentData` fields, appended last and empty by default:
+  `randomizationType`, `switchbackClusters` (an `nlohmann::ordered_json`, so the
+  served unit type order is kept), `switchbackClusterValues`,
+  `switchbackStartAt`, `switchbackPeriodMs`, `switchbackCarryoverDurationMs`,
+  `switchbackBurnInDurationMs`, `switchbackBurnOutDurationMs`,
+  `switchbackDesignType` and `switchbackEstimand`; `from_json`/`to_json`
+  overloads for `nlohmann::ordered_json` on `ExperimentData` and `ContextData`;
+  and `assign_switchback()`/`switchback_permutation()` in
+  `absmartly/switchback.h`, pinned by the platform golden vectors. The SDK's
+  client decodes a payload that has a cluster map through `ordered_json`. A
+  switchback serves the variant of the cluster its linked units' attribute
+  selects in the current period, with its exposure queued once per period
+  under the serving unit (again only when an audience, rule or custom change
+  re-queues it); holdouts never apply to it. Payloads without switchbacks assign and
+  publish exactly as before.
 
 ### Fixed
 
@@ -29,6 +45,16 @@
   from that callback sends them all. javascript-sdk queues each one just
   before its callback, and there such a logger leaves the holdout exposures
   pending.
+- A JSON integer attribute value keys a switchback cluster by its decimal text,
+  and every floating-point value (`3.0` included) gives no cluster, as in
+  java-sdk and the Collector. Since `nlohmann::json` keeps `3` and `3.0` apart,
+  no rounding applies here (unlike javascript-sdk, which cannot tell them apart).
+- A switchback exposure is stamped with the clock reading that chose its
+  period; unit experiments are still stamped when the exposure is queued.
+- Changing a switchback cluster attribute mid-period is not supported, as in
+  java-sdk and the Collector: the arm cached at the period's first read stays
+  for that period, before the exposure or a re-queued one, and the new value
+  applies from the next period. Set cluster attributes before the first read.
 
 ## 1.0.0
 

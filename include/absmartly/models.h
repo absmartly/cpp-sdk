@@ -77,7 +77,36 @@ struct ExperimentData {
     std::vector<int> holdoutIds;
     // Carried for wire fidelity only: a holdout's arm count comes from its split.
     std::string holdoutType;
+    // Switchback configuration (R33). randomizationType is "switchback" for a switchback and
+    // "unit" or empty for a unit experiment. Instants and durations are epoch/duration
+    // milliseconds; the carryover and burn windows are analysis-only and never read.
+    std::string randomizationType;
+    // Unit type name -> attribute path, as served. The order is semantic (the first linked unit
+    // with a value serves), so it is kept as decoded: decode with nlohmann::ordered_json to keep
+    // the served order, since nlohmann::json sorts object keys. Null when absent.
+    nlohmann::ordered_json switchbackClusters;
+    // Allowed cluster values; nullopt or empty admits every value.
+    std::optional<std::vector<std::string>> switchbackClusterValues;
+    std::optional<int64_t> switchbackStartAt;
+    std::optional<int64_t> switchbackPeriodMs;
+    std::optional<int64_t> switchbackCarryoverDurationMs;
+    std::optional<int64_t> switchbackBurnInDurationMs;
+    std::optional<int64_t> switchbackBurnOutDurationMs;
+    std::string switchbackDesignType;
+    std::string switchbackEstimand;
 };
+
+namespace detail {
+
+inline constexpr std::pair<const char*, std::optional<int64_t> ExperimentData::*> switchback_grid[] = {
+    {"switchbackStartAt", &ExperimentData::switchbackStartAt},
+    {"switchbackPeriodMs", &ExperimentData::switchbackPeriodMs},
+    {"switchbackCarryoverDurationMs", &ExperimentData::switchbackCarryoverDurationMs},
+    {"switchbackBurnInDurationMs", &ExperimentData::switchbackBurnInDurationMs},
+    {"switchbackBurnOutDurationMs", &ExperimentData::switchbackBurnOutDurationMs},
+};
+
+}
 
 inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     j = nlohmann::json{
@@ -108,6 +137,27 @@ inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     }
     if (!e.holdoutType.empty()) {
         j["holdoutType"] = e.holdoutType;
+    }
+    if (!e.randomizationType.empty()) {
+        j["randomizationType"] = e.randomizationType;
+    }
+    if (!e.switchbackClusters.is_null()) {
+        j["switchbackClusters"] = e.switchbackClusters;
+    }
+    if (e.switchbackClusterValues.has_value()) {
+        j["switchbackClusterValues"] = *e.switchbackClusterValues;
+    }
+    for (const auto& [name, member] : detail::switchback_grid) {
+        const auto& value = e.*member;
+        if (value.has_value()) {
+            j[name] = *value;
+        }
+    }
+    if (!e.switchbackDesignType.empty()) {
+        j["switchbackDesignType"] = e.switchbackDesignType;
+    }
+    if (!e.switchbackEstimand.empty()) {
+        j["switchbackEstimand"] = e.switchbackEstimand;
     }
 }
 
@@ -165,6 +215,82 @@ inline bool get_seed(const nlohmann::json& j, int32_t& out) {
         out = to_int32(j.get<double>());
     }
     return true;
+}
+
+// A JSON integer, or an integral float, that fits an int64_t. Anything else is absent.
+inline std::optional<int64_t> get_int64(const nlohmann::json& j) {
+    if (j.is_number_unsigned()) {
+        const auto value = j.get<uint64_t>();
+        if (value > static_cast<uint64_t>(INT64_MAX)) return std::nullopt;
+        return static_cast<int64_t>(value);
+    }
+    if (j.is_number_integer()) {
+        return j.get<int64_t>();
+    }
+    if (j.is_number_float()) {
+        const double value = j.get<double>();
+        // [-2^63, 2^63): the double range that converts to int64_t without overflow.
+        if (!(value >= -9223372036854775808.0 && value < 9223372036854775808.0) ||
+            std::islessgreater(std::trunc(value), value)) {
+            return std::nullopt;
+        }
+        return static_cast<int64_t>(value);
+    }
+    return std::nullopt;
+}
+
+// The switchback fields are replaced on every decode, like the holdout coverage. An allow-list
+// entry that is neither a string nor an integer is kept as "", which no cluster key equals (a
+// key is never empty), so a malformed entry never widens the list.
+inline void decode_switchback(const nlohmann::json& j, ExperimentData& e) {
+    e.randomizationType.clear();
+    e.switchbackClusters = nullptr;
+    e.switchbackClusterValues.reset();
+    for (const auto& [name, member] : switchback_grid) {
+        (e.*member).reset();
+    }
+    e.switchbackDesignType.clear();
+    e.switchbackEstimand.clear();
+    if (!j.is_object()) {
+        return;
+    }
+    const auto string_field = [&j](const char* name, std::string& out) {
+        const auto it = j.find(name);
+        if (it != j.end() && it->is_string()) {
+            out = it->get<std::string>();
+        }
+    };
+    string_field("randomizationType", e.randomizationType);
+    string_field("switchbackDesignType", e.switchbackDesignType);
+    string_field("switchbackEstimand", e.switchbackEstimand);
+
+    const auto clusters = j.find("switchbackClusters");
+    if (clusters != j.end() && clusters->is_object()) {
+        e.switchbackClusters = *clusters;
+    }
+    const auto values = j.find("switchbackClusterValues");
+    if (values != j.end() && values->is_array()) {
+        std::vector<std::string> allowed;
+        allowed.reserve(values->size());
+        for (const auto& value : *values) {
+            if (value.is_string()) {
+                allowed.push_back(value.get<std::string>());
+            } else if (value.is_number_unsigned()) {
+                allowed.push_back(std::to_string(value.get<uint64_t>()));
+            } else if (value.is_number_integer()) {
+                allowed.push_back(std::to_string(value.get<int64_t>()));
+            } else {
+                allowed.emplace_back();
+            }
+        }
+        e.switchbackClusterValues = std::move(allowed);
+    }
+    for (const auto& [name, member] : switchback_grid) {
+        const auto it = j.find(name);
+        if (it != j.end()) {
+            e.*member = get_int64(*it);
+        }
+    }
 }
 
 } // namespace detail
@@ -234,6 +360,25 @@ inline void from_json(const nlohmann::json& j, ExperimentData& e) {
     }
     if (j.contains("holdoutType") && j["holdoutType"].is_string()) {
         j.at("holdoutType").get_to(e.holdoutType);
+    }
+    detail::decode_switchback(j, e);
+}
+
+// Keeps switchbackClusters in its served order; otherwise identical to the nlohmann::json decode.
+inline void from_json(const nlohmann::ordered_json& j, ExperimentData& e) {
+    from_json(nlohmann::json(j), e);
+    if (j.is_object()) {
+        const auto it = j.find("switchbackClusters");
+        if (it != j.end() && it->is_object()) {
+            e.switchbackClusters = *it;
+        }
+    }
+}
+
+inline void to_json(nlohmann::ordered_json& j, const ExperimentData& e) {
+    j = nlohmann::json(e);
+    if (!e.switchbackClusters.is_null()) {
+        j["switchbackClusters"] = e.switchbackClusters;
     }
 }
 
@@ -323,6 +468,30 @@ inline void from_json(const nlohmann::json& j, ContextData& c) {
                 c.holdouts.push_back(entry.get<HoldoutData>());
             } catch (const nlohmann::json::exception&) {
             }
+        }
+    }
+}
+
+// Decoding from nlohmann::ordered_json keeps each switchbackClusters map in its served order; a
+// nlohmann::json decode sorts it by unit type name. Everything else decodes the same.
+inline void from_json(const nlohmann::ordered_json& j, ContextData& c) {
+    from_json(nlohmann::json(j), c);
+    const auto& experiments = j.at("experiments");
+    for (size_t i = 0; i < c.experiments.size() && i < experiments.size(); ++i) {
+        const auto& experiment = experiments[i];
+        const auto clusters = experiment.find("switchbackClusters");
+        if (clusters != experiment.end() && clusters->is_object()) {
+            c.experiments[i].switchbackClusters = *clusters;
+        }
+    }
+}
+
+inline void to_json(nlohmann::ordered_json& j, const ContextData& c) {
+    j = nlohmann::json(c);
+    auto& experiments = j["experiments"];
+    for (size_t i = 0; i < c.experiments.size(); ++i) {
+        if (!c.experiments[i].switchbackClusters.is_null()) {
+            experiments[i]["switchbackClusters"] = c.experiments[i].switchbackClusters;
         }
     }
 }
