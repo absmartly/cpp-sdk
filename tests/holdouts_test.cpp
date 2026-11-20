@@ -2025,8 +2025,9 @@ TEST_CASE("Holdouts: a covered call logs its own exposure, then its holdouts in 
     REQUIRE(pending_at_callback == std::vector<size_t>{3, 3, 3});
 }
 
-// Measured with this exact fixture and logger against main (1.0.0): 69. The test binary's own
-// operator new adds nothing per call, so the count is the SDK's.
+// Measured with this exact fixture and logger against main (1.0.0): 69. The count includes the
+// standard library's and nlohmann/json's allocations, so it holds only for the toolchain CI uses
+// (libstdc++, the bundled nlohmann/json); elsewhere the test is skipped.
 constexpr long UNCOVERED_FIRST_TREATMENT_ALLOCATIONS = 69;
 
 TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdouts][cost]") {
@@ -2043,8 +2044,13 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
                     logger);
     context.treatment("warm_up"); // hashes the unit and creates its assigner
     const std::string name = "exp_plain";
-    REQUIRE(allocations_of([&] { context.treatment(name); }) == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
+    const long allocations = allocations_of([&] { context.treatment(name); });
     REQUIRE(logger->exposures == 2);
+#if defined(__GLIBCXX__)
+    REQUIRE(allocations == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
+#else
+    SKIP("allocation count measured for libstdc++ only, got " << allocations);
+#endif
 }
 
 TEST_CASE("Holdouts: treatment returns its decision when the logger refreshes and re-resolves it",
