@@ -1,3 +1,4 @@
+#include "context_test_access.h"
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/context.h>
 #include <absmartly/context_event_logger.h>
@@ -2219,4 +2220,33 @@ TEST_CASE("Holdouts: a rule-won candidate's missing key is not a held-out fallba
     Context context(config_with(UID), data);
     context.set_attribute("country", "US");
     REQUIRE(context.variable_value("color", "default") == "control");
+}
+
+TEST_CASE("Holdouts: a refresh inside variable_value frees the retired data when the walk ends", "[holdouts][refresh][cache]") {
+    auto log = std::make_shared<ExposureLog>();
+    int refreshes = 0;
+    log->on_exposure = [&](Context& c, const json&) { if (refreshes++ < 3) c.refresh(c.data()); };
+    Context context(config_with(UID),
+                    data_of({}, {with_variables(new_experiment(1, "exp_a"), "color"),
+                                 with_variables(new_experiment(2, "exp_b"), "color")}),
+                    log);
+    REQUIRE(context.variable_value("color", "d") == "treatment");
+    REQUIRE(refreshes >= 1);
+    REQUIRE(absmartly::ContextTestAccess::retired(context) == 0);
+}
+
+TEST_CASE("Holdouts: set_unit of another unit type keeps a peeked assignment with an unresolved holdout", "[holdouts][refresh][cache]") {
+    auto data = data_of({new_holdout(11, "holdout_user_id", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO, "user_id")},
+                        {covered_by(with_variables(new_experiment(1, "exp_user", "user_id", 1), "color"), {11})});
+    Context context(ContextConfig{}, data);
+    REQUIRE(context.peek_variable_value("color", "d") == "treatment");
+    auto edited = data;
+    edited.experiments[0].variants[1].config = json({{"color", "edited"}}).dump();
+    context.refresh(edited);
+    // Same iteration: the peeked assignment stays cached, as in javascript-sdk.
+    REQUIRE(context.peek_variable_value("color", "d") == "treatment");
+    context.set_unit("session_id", UID);
+    REQUIRE(context.peek_variable_value("color", "d") == "treatment");
+    context.set_unit("user_id", UID);
+    REQUIRE(context.peek_variable_value("color", "d") == "edited");
 }

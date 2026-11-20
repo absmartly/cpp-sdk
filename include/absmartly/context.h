@@ -245,13 +245,20 @@ private:
     int walks_ = 0;
 
     struct WalkGuard {
-        explicit WalkGuard(Context& context) : context_(context) { ++context_.walks_; }
+        explicit WalkGuard(Context& context) : context_(context) {}
+        void start() {
+            if (!active_ && context_.event_handler_) {
+                ++context_.walks_;
+                active_ = true;
+            }
+        }
         ~WalkGuard() {
-            if (--context_.walks_ == 0) context_.retired_.clear();
+            if (active_ && --context_.walks_ == 0) context_.retired_.clear();
         }
         WalkGuard(const WalkGuard&) = delete;
         WalkGuard& operator=(const WalkGuard&) = delete;
         Context& context_;
+        bool active_ = false;
     };
 };
 

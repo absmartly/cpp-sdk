@@ -339,8 +339,9 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             continue;
         }
 
+        const auto value_it = assignment.variables.find(key);
         const bool wins = (assignment.assigned || assignment.overridden || assignment.rule_override) &&
-                          assignment.variables.count(key) > 0;
+                          value_it != assignment.variables.end();
         const bool falls_back = !wins && assignment.suppressed && !assignment.overridden &&
                                 !assignment.rule_override && !has_suppressed_fallback;
 
@@ -349,7 +350,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             // assignment, and JS returns the value it exposed.
             std::optional<nlohmann::json> value;
             if (wins) {
-                value = assignment.variables.at(key);
+                value = value_it->second;
             } else if (falls_back) {
                 has_suppressed_fallback = true;
                 auto it = assignment.variables.find(key);
@@ -357,6 +358,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
                     suppressed_fallback = it->second;
                 }
             }
+            walk.start();
             assignment.exposed = true;
             trigger_exposures(name, assignment);
             if (value.has_value()) {
@@ -366,7 +368,7 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         }
 
         if (wins) {
-            return assignment.variables.at(key);
+            return value_it->second;
         }
         if (falls_back) {
             has_suppressed_fallback = true;
@@ -399,9 +401,11 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
         auto& assignment = get_or_create_assignment(experiment_name);
 
         if (assignment.has_variables) {
-            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
-                assignment.variables.count(key) > 0) {
-                return assignment.variables.at(key);
+            if (assignment.assigned || assignment.overridden || assignment.rule_override) {
+                auto value_it = assignment.variables.find(key);
+                if (value_it != assignment.variables.end()) {
+                    return value_it->second;
+                }
             }
 
             if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
