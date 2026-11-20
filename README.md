@@ -505,9 +505,10 @@ fields); there is nothing to call.
   (matching java-sdk). Unit experiments keep their existing fallthrough behaviour.
 - An experiment's exposure is queued once per period, under the serving unit,
   stamped with the time that chose the period. A change that re-queues it in
-  the same period (an audience, rule or custom assignment change) queues
-  another exposure; with a non-strict audience that exposure is for the same
-  cached arm. The cluster is read once per period, at the first read (`peek()`
+  the same period queues another exposure (for example, a change to the
+  audience result, a matching rule, a custom assignment or full-on). A rule,
+  custom assignment or full-on change can give a different arm; a non-strict
+  audience change alone keeps the cached arm. The cluster is read once per period, at the first read (`peek()`
   included). **Changing a cluster attribute mid-period is
   not supported:** the arm cached at that first read stays for the rest of the
   period, whether the change comes before the exposure or before a re-queued

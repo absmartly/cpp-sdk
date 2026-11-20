@@ -26,8 +26,8 @@
   client decodes a payload that has a cluster map through `ordered_json`. A
   switchback serves the variant of the cluster its linked units' attribute
   selects in the current period, with its exposure queued once per period
-  under the serving unit (again only when an audience, rule or custom change
-  re-queues it); holdouts never apply to it. Payloads without switchbacks assign and
+  under the serving unit (again only when a change re-queues it, such as an
+  audience, rule, custom or full-on change); holdouts never apply to it. Payloads without switchbacks assign and
   publish exactly as before.
 
 ### Fixed
