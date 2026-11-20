@@ -2013,8 +2013,6 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
     REQUIRE(logger->exposures == 2);
 }
 
-// --- Marcio round 3 -----------------------------------------------------------------------------
-
 TEST_CASE("Holdouts: treatment returns its decision when the logger refreshes and re-resolves it",
           "[holdouts][logger][refresh]") {
     // The held-out decision is control. The holdout's logger refreshes to an iteration that is no
@@ -2087,7 +2085,6 @@ TEST_CASE("Holdouts: an assigned variable winner is returned even if the logger 
 
 namespace {
 
-// count candidates sharing one variable key; the first wins it.
 ContextData shared_key_data(int count) {
     std::vector<ExperimentData> experiments;
     for (int i = 0; i < count; ++i) {
@@ -2190,8 +2187,6 @@ TEST_CASE("Holdouts: a logger that refreshes with the context's own data during 
 }
 
 TEST_CASE("Holdouts: an overridden candidate's missing key is not a held-out fallback", "[holdouts][variables]") {
-    // The first candidate is held out but overridden to a variant without the key, so it neither
-    // wins nor decides the fallback; the second held-out candidate's control value does.
     auto overridden = covered_by(new_experiment(1, "exp_overridden"), {11});
     overridden.variants = {{"A", R"({"color":"override-control"})"}, {"B", R"({"other":1})"}};
     auto held_out = with_variables(covered_by(new_experiment(2, "exp_held_out"), {11}), "color");
@@ -2249,4 +2244,119 @@ TEST_CASE("Holdouts: set_unit of another unit type keeps a peeked assignment wit
     REQUIRE(context.peek_variable_value("color", "d") == "treatment");
     context.set_unit("user_id", UID);
     REQUIRE(context.peek_variable_value("color", "d") == "edited");
+}
+
+TEST_CASE("Holdouts: repeated refreshes during one variable_value retain only the walked data",
+          "[holdouts][logger][refresh][variables][cost]") {
+    // Every candidate but the last lacks the key, and each exposure refreshes. Only the data
+    // the walk started on is retained, however many refreshes the walk sees.
+    std::vector<ExperimentData> experiments;
+    for (int i = 0; i < 20; ++i) {
+        auto experiment = new_experiment(1 + i, "exp_" + std::to_string(i));
+        experiment.variants = {{"A", R"({"color":"control"})"}, {"B", R"({"other":1})"}};
+        experiment.split = {0.0, 1.0};
+        experiments.push_back(experiment);
+    }
+    experiments.back().variants = {{"A", R"({"color":"control"})"}, {"B", R"({"color":"last"})"}};
+    const auto data = data_of({}, experiments);
+    std::vector<size_t> retained;
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json&) {
+        context.refresh(data);
+        retained.push_back(ContextTestAccess::retired(context));
+    };
+    Context context(config_with(UID), data, logger);
+
+    REQUIRE(context.variable_value("color", "default") == "last");
+    REQUIRE(retained.size() == 20);
+    REQUIRE(*std::max_element(retained.begin(), retained.end()) == 1);
+    REQUIRE(ContextTestAccess::retired(context) == 0);
+}
+
+TEST_CASE("Holdouts: nested variable walks each keep the data they started on", "[holdouts][logger][refresh][variables]") {
+    auto first = with_variables(new_experiment(1, "exp_first"), "color");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    auto shape = new_experiment(3, "exp_shape");
+    shape.split = {1.0, 0.0};
+    shape.variants = {{"A", R"({"other":1})"}, {"B", R"({"shape":"x"})"}};
+    const auto data = data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color"), shape,
+                                   [] {
+                                       auto e = new_experiment(4, "exp_shape_2");
+                                       e.variants = {{"A", R"({"shape":"a"})"}, {"B", R"({"shape":"square"})"}};
+                                       return e;
+                                   }()});
+    json inner;
+    std::vector<size_t> retained;
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json& event) {
+        context.refresh(data);
+        retained.push_back(ContextTestAccess::retired(context));
+        if (event["name"] == "exp_first") inner = context.variable_value("shape", "none");
+    };
+    Context context(config_with(UID), data, logger);
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(inner == "square");
+    REQUIRE(*std::max_element(retained.begin(), retained.end()) <= 2);
+    REQUIRE(ContextTestAccess::retired(context) == 0);
+}
+
+TEST_CASE("Holdouts: a refresh from a variant parse error during a walk leaves a valid index",
+          "[holdouts][logger][refresh][variables]") {
+    // The exposure refreshes to data with a malformed variant config; the error logger
+    // refreshes again. The parse error is reported after its index is complete.
+    auto first = with_variables(new_experiment(1, "exp_first"), "color");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    const auto good = data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color")});
+    auto bad = good;
+    bad.experiments[0].variants[1].config = "{not json";
+    struct Logger : ContextEventLogger {
+        const ContextData* good = nullptr;
+        const ContextData* bad = nullptr;
+        int errors = 0;
+        bool refreshed = false;
+        void handle_event(Context& context, const std::string& type, const json&) override {
+            if (type == "exposure" && !refreshed) {
+                refreshed = true;
+                context.refresh(*bad);
+            } else if (type == "error") {
+                ++errors;
+                context.refresh(*good);
+            }
+        }
+    };
+    auto logger = std::make_shared<Logger>();
+    logger->good = &good;
+    logger->bad = &bad;
+    Context context(config_with(UID), good, logger);
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(logger->errors == 1);
+    REQUIRE(context.peek_variable_value("color", "default") == "treatment");
+    REQUIRE(context.treatment("exp_first") == 0);
+}
+
+TEST_CASE("Holdouts: a hash on a split boundary picks the arm JS picks", "[holdouts][arms][verdicts]") {
+    // JS scales the hash by 1/0xffffffff, so a hash whose scaled value equals the first split
+    // boundary lands in arm 1 (the comparison is strict). Scaling by 1/2^32 lands just below it.
+    const uint32_t unit_hash = murmur3_32(hash_unit(UID), 0);
+    uint8_t buffer[12];
+    const auto put = [&](int at, uint32_t value) {
+        for (int i = 0; i < 4; ++i) buffer[at + i] = static_cast<uint8_t>(value >> (8 * i));
+    };
+    put(0, static_cast<uint32_t>(HOLDOUT_A_SEED_LO));
+    put(4, static_cast<uint32_t>(HOLDOUT_A_SEED_HI));
+    put(8, unit_hash);
+    const uint32_t hash = murmur3_32(buffer, 12, 0);
+    const double boundary = hash * (1.0 / 0xffffffff);
+    REQUIRE(static_cast<double>(hash) / 4294967296.0 < boundary);
+
+    auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+    holdout.split = {boundary, 1.0 - boundary};
+    Context context(config_with(UID), data_of({holdout}, {covered_by(new_experiment(1, "exp_boundary"), {11})}));
+
+    REQUIRE(context.treatment("exp_boundary") == NORMAL_VARIANT);
+    require_published(context, {own_exposure(1, "exp_boundary", NORMAL_VARIANT), holdout_exposure(11, "holdout_a", 1)});
 }

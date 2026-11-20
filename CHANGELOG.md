@@ -20,15 +20,18 @@
   `variable_value()` could crash the call (the candidate list it walked was
   freed). The walk now continues over the candidates it started with, as in
   javascript-sdk.
+- A holdout arm is chosen with javascript-sdk's probability scale, so a unit
+  whose hash lands exactly on a split boundary gets the same arm in every SDK.
 - An event logger that refreshed the context from an exposure and read the same
   experiment again could change what the outer `treatment()`/`variable_value()`
   returned; both now return the decision they exposed, as in javascript-sdk.
 
 ### Notes
 
-- New fields grow the public model and `Context` layouts. The package stays
-  source compatible within 1.x; rebuild everything that includes the SDK
-  headers when upgrading (see Installed Package in the README). Code that
+- New fields grow the public model and `Context` layouts; rebuild everything
+  that includes the SDK headers when upgrading (see Installed Package in the
+  README). A structured binding of `ContextData` must name the new `holdouts`
+  member. Code that
   aggregate-initializes `ExperimentData` or `ContextData` positionally still
   compiles, but `-Wextra` reports the appended fields as missing initializers.
 

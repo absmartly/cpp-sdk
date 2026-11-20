@@ -234,32 +234,35 @@ private:
     // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
     std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
 
-    // Data and index replaced by a refresh while a variable_value() walk iterates them; freed
-    // when the outermost walk ends. A list, so a retired entry is never relocated.
+    // The data and index generation (data_seq_) each active variable_value() walk iterates,
+    // innermost last. A refresh retires the current generation only while a walk still
+    // iterates it; it is freed when the last such walk ends.
     struct RetiredData {
+        int generation = 0;
         ContextData data;
         std::map<std::string, ExperimentIndex> index;
         std::map<std::string, std::vector<const ExperimentIndex*>> index_variables;
     };
     std::list<RetiredData> retired_;
-    int walks_ = 0;
+    std::vector<int> walk_generations_;
 
     struct WalkGuard {
         explicit WalkGuard(Context& context) : context_(context) {}
         void start() {
             if (!active_ && context_.event_handler_) {
-                ++context_.walks_;
+                context_.walk_generations_.push_back(context_.data_seq_);
                 active_ = true;
             }
         }
         ~WalkGuard() {
-            if (active_ && --context_.walks_ == 0) context_.retired_.clear();
+            if (active_) context_.end_walk();
         }
         WalkGuard(const WalkGuard&) = delete;
         WalkGuard& operator=(const WalkGuard&) = delete;
         Context& context_;
         bool active_ = false;
     };
+    void end_walk();
 };
 
 } // namespace absmartly

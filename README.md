@@ -66,10 +66,12 @@ find_package(absmartly-sdk 1.0 REQUIRED)
 target_link_libraries(your_target PRIVATE absmartly::absmartly-sdk)
 ```
 
-The package's version check (`SameMajorVersion`) promises source compatibility
-within a major version, not a stable binary layout: public types such as
-`ContextData`, `ExperimentData` and `Context` may gain fields in a minor
-release. The SDK is a static library, so rebuild your application (and any
+The package's version check (`SameMajorVersion`) only selects a package with
+the same major version; it promises neither source nor binary compatibility.
+Public types such as `ContextData`, `ExperimentData` and `Context` may gain
+fields in a minor release, so code that depends on their exact member list (a
+structured binding of `ContextData`, for example) may need updating, and the
+binary layout changes. The SDK is a static library, so rebuild your application (and any
 library of yours that includes the SDK headers) against the SDK version you
 link; do not mix objects compiled against different SDK versions.
 

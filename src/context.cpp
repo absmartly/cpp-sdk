@@ -342,8 +342,13 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         const auto value_it = assignment.variables.find(key);
         const bool wins = (assignment.assigned || assignment.overridden || assignment.rule_override) &&
                           value_it != assignment.variables.end();
-        const bool falls_back = !wins && assignment.suppressed && !assignment.overridden &&
-                                !assignment.rule_override && !has_suppressed_fallback;
+        if (!wins && assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
+            !has_suppressed_fallback) {
+            has_suppressed_fallback = true;
+            if (value_it != assignment.variables.end()) {
+                suppressed_fallback = value_it->second;
+            }
+        }
 
         if (!assignment.exposed) {
             // The decision is taken before the exposure: its logger may re-resolve this
@@ -351,31 +356,15 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
             std::optional<nlohmann::json> value;
             if (wins) {
                 value = value_it->second;
-            } else if (falls_back) {
-                has_suppressed_fallback = true;
-                auto it = assignment.variables.find(key);
-                if (it != assignment.variables.end()) {
-                    suppressed_fallback = it->second;
-                }
             }
             walk.start();
             assignment.exposed = true;
             trigger_exposures(name, assignment);
             if (value.has_value()) {
-                return *value;
+                return std::move(*value);
             }
-            continue;
-        }
-
-        if (wins) {
+        } else if (wins) {
             return value_it->second;
-        }
-        if (falls_back) {
-            has_suppressed_fallback = true;
-            auto it = assignment.variables.find(key);
-            if (it != assignment.variables.end()) {
-                suppressed_fallback = it->second;
-            }
         }
     }
 
@@ -660,6 +649,14 @@ void Context::refresh() {
     refresh(new_data);
 }
 
+void Context::end_walk() {
+    walk_generations_.pop_back();
+    retired_.remove_if([this](const RetiredData& retired) {
+        return std::find(walk_generations_.begin(), walk_generations_.end(), retired.generation) ==
+               walk_generations_.end();
+    });
+}
+
 void Context::refresh(const ContextData& new_data) {
     check_ready(true);
 
@@ -670,13 +667,20 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
-    // Copied first: new_data may be data() itself, which retiring moves from.
-    ContextData installed = new_data;
-    if (walks_ > 0) {
-        // A variable_value() walk is iterating the current index; keep it alive until it ends.
-        retired_.push_back(RetiredData{std::move(data_), std::move(index_), std::move(index_variables_)});
+    if (std::find(walk_generations_.begin(), walk_generations_.end(), data_seq_) != walk_generations_.end()) {
+        // A variable_value() walk iterates the current index; keep it until that walk ends.
+        // Copied first: new_data may be data() itself. The node is allocated before anything
+        // moves, so a failed allocation leaves the live index intact.
+        ContextData installed = new_data;
+        auto& retired = retired_.emplace_back();
+        retired.generation = data_seq_;
+        retired.data = std::move(data_);
+        retired.index = std::move(index_);
+        retired.index_variables = std::move(index_variables_);
+        data_ = std::move(installed);
+    } else {
+        data_ = new_data;
     }
-    data_ = std::move(installed);
     build_index();
     hashes_.clear();
     assigners_.clear();
@@ -931,7 +935,7 @@ std::shared_ptr<HoldoutAssignment> Context::get_holdout_assignment(const Holdout
     assignment->id = holdout.id;
     assignment->iteration = holdout.iteration;
     assignment->unit_type = unit_type;
-    assignment->variant = assigner_it->second.assign(holdout.split, holdout.seedHi, holdout.seedLo);
+    assignment->variant = assigner_it->second.assign_holdout(holdout.split, holdout.seedHi, holdout.seedLo);
     assignment->arm_count = holdout.split.size();
     holdout_assignments_[std::move(key)] = assignment;
     return assignment;
@@ -987,6 +991,8 @@ void Context::build_index() {
     index_.clear();
     index_variables_.clear();
     holdouts_by_id_.clear();
+    // Reported once the index is complete: a logger may refresh from the error event.
+    std::vector<nlohmann::json> errors;
 
     // A holdout without a split cannot be assigned, so it covers nothing.
     for (const auto& holdout : data_.holdouts) {
@@ -1037,8 +1043,8 @@ void Context::build_index() {
                             }
                         }
                     } catch (const nlohmann::json::exception& e) {
-                        emit_event("error", {{"message", "Failed to parse variant config for " + exp.name},
-                                             {"error", e.what()}, {"variant", i}});
+                        errors.push_back({{"message", "Failed to parse variant config for " + exp.name},
+                                          {"error", e.what()}, {"variant", i}});
                     }
                 }
             } else if (variant.config.is_object()) {
@@ -1064,6 +1070,10 @@ void Context::build_index() {
                 }
             }
         }
+    }
+
+    for (const auto& error : errors) {
+        emit_event("error", error);
     }
 }
 
