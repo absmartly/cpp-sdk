@@ -298,6 +298,44 @@ TEST_CASE("Switchback cluster: setAttribute mid-period does not reassign within 
     REQUIRE(context->pending() == 12);
 }
 
+TEST_CASE("Switchback cluster: a mid-period cluster change before the exposure or a requeue keeps the cached arm",
+          "[switchback][cluster][period]") {
+    // Owner decision: a cluster attribute changed mid-period is not supported; the arm cached at
+    // the period's first read stays for the period and the change applies from the next one.
+    REQUIRE(expected("Lisboa", 0) != expected("Faro", 0));
+    REQUIRE(expected("Lisboa", 1) != expected("Faro", 1));
+    SECTION("changed after a peek, before the first exposure") {
+        ClockScope clock(ANCHOR + 10);
+        auto context = create(attribute_switchback("city"));
+        context->set_attribute("city", "Lisboa");
+        REQUIRE(context->peek("exp_sb") == expected("Lisboa", 0));
+        context->set_attribute("city", "Faro");
+        REQUIRE(context->treatment("exp_sb") == expected("Lisboa", 0));
+        REQUIRE(published(*context) == json::array({store_exposure(expected("Lisboa", 0), ANCHOR + 10)}));
+        TestClock::now = ANCHOR + HOUR;
+        REQUIRE(context->treatment("exp_sb") == expected("Faro", 1));
+    }
+    SECTION("changed before a requeue in the same period") {
+        ClockScope clock(ANCHOR + 10);
+        auto experiment = attribute_switchback("city");
+        experiment.audience = R"({"filter":[{"eq":[{"var":"tier"},{"value":"gold"}]}]})";
+        auto context = create(experiment);
+        context->set_attribute("city", "Lisboa");
+        context->set_attribute("tier", "gold");
+        REQUIRE(context->treatment("exp_sb") == expected("Lisboa", 0));
+        TestClock::now = ANCHOR + 20;
+        // The audience change requeues the slot; the cluster change does not move it.
+        context->set_attribute("city", "Faro");
+        context->set_attribute("tier", "silver");
+        REQUIRE(context->treatment("exp_sb") == expected("Lisboa", 0));
+        const auto exposures = published(*context);
+        REQUIRE(exposures.size() == 2);
+        REQUIRE(exposures[1]["variant"] == expected("Lisboa", 0));
+        TestClock::now = ANCHOR + HOUR;
+        REQUIRE(context->treatment("exp_sb") == expected("Faro", 1));
+    }
+}
+
 TEST_CASE("Switchback cluster: an attribute set after an ineligible resolution waits for the next period",
           "[switchback][cluster][period]") {
     ClockScope clock(ANCHOR + 10);

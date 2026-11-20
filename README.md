@@ -504,8 +504,12 @@ fields); there is nothing to call.
   arm omits the key: that returns the default, without trying a later experiment
   (matching java-sdk). Unit experiments keep their existing fallthrough behaviour.
 - One exposure per experiment and period, under the serving unit, stamped with
-  the time that chose the period. The cluster is read once per period: a
-  `set_attribute()` later in the period takes effect in the next one. A refresh
+  the time that chose the period. The cluster is read once per period, at the
+  first read (`peek()` included). **Changing a cluster attribute mid-period is
+  not supported:** the arm cached at that first read stays for the rest of the
+  period, whether the change comes before the exposure or before a re-queued
+  one, and the new value takes effect in the next period. Set cluster
+  attributes before the first read of a period. A refresh
   that changes the cluster map, the allowed values, the grid or the design
   starts over; changes to the burn-in, burn-out, carryover and estimand fields
   do not. The exposure and publish payloads carry no new fields, and attributes

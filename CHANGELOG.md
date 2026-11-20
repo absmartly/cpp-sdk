@@ -50,6 +50,10 @@
   no rounding applies here (unlike javascript-sdk, which cannot tell them apart).
 - A switchback exposure is stamped with the clock reading that chose its
   period; unit experiments are still stamped when the exposure is queued.
+- Changing a switchback cluster attribute mid-period is not supported, as in
+  java-sdk and the Collector: the arm cached at the period's first read stays
+  for that period, before the exposure or a re-queued one, and the new value
+  applies from the next period. Set cluster attributes before the first read.
 
 ## 1.0.0
 
