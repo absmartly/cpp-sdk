@@ -503,9 +503,12 @@ fields); there is nothing to call.
 - For a variable key, the first assigned switchback wins even when its selected
   arm omits the key: that returns the default, without trying a later experiment
   (matching java-sdk). Unit experiments keep their existing fallthrough behaviour.
-- One exposure per experiment and period, under the serving unit, stamped with
-  the time that chose the period. The cluster is read once per period, at the
-  first read (`peek()` included). **Changing a cluster attribute mid-period is
+- An experiment's exposure is queued once per period, under the serving unit,
+  stamped with the time that chose the period. A change that re-queues it in
+  the same period (an audience, rule or custom assignment change) queues
+  another exposure; with a non-strict audience that exposure is for the same
+  cached arm. The cluster is read once per period, at the first read (`peek()`
+  included). **Changing a cluster attribute mid-period is
   not supported:** the arm cached at that first read stays for the rest of the
   period, whether the change comes before the exposure or before a re-queued
   one, and the new value takes effect in the next period. Set cluster

@@ -300,8 +300,8 @@ TEST_CASE("Switchback cluster: setAttribute mid-period does not reassign within 
 
 TEST_CASE("Switchback cluster: a mid-period cluster change before the exposure or a requeue keeps the cached arm",
           "[switchback][cluster][period]") {
-    // Owner decision: a cluster attribute changed mid-period is not supported; the arm cached at
-    // the period's first read stays for the period and the change applies from the next one.
+    // The arm cached at the period's first read stays for the period; a cluster change applies
+    // from the next one.
     REQUIRE(expected("Lisboa", 0) != expected("Faro", 0));
     REQUIRE(expected("Lisboa", 1) != expected("Faro", 1));
     SECTION("changed after a peek, before the first exposure") {
