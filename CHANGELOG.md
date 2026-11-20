@@ -28,7 +28,9 @@
 
 - New fields grow the public model and `Context` layouts. The package stays
   source compatible within 1.x; rebuild everything that includes the SDK
-  headers when upgrading (see Installed Package in the README).
+  headers when upgrading (see Installed Package in the README). Code that
+  aggregate-initializes `ExperimentData` or `ContextData` positionally still
+  compiles, but `-Wextra` reports the appended fields as missing initializers.
 
 - All exposures of one `treatment()`/`variable_value()` call on a covered
   experiment (its own and its holdouts') are queued before the event logger

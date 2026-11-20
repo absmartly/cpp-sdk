@@ -666,11 +666,13 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
+    // Copied first: new_data may be data() itself, which retiring moves from.
+    ContextData installed = new_data;
     if (walks_ > 0) {
         // A variable_value() walk is iterating the current index; keep it alive until it ends.
         retired_.push_back(RetiredData{std::move(data_), std::move(index_), std::move(index_variables_)});
     }
-    data_ = new_data;
+    data_ = std::move(installed);
     build_index();
     hashes_.clear();
     assigners_.clear();

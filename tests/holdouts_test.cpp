@@ -2166,3 +2166,40 @@ TEST_CASE("Holdouts: removing coverage restores the normal assignment with a fre
                                 holdout_exposure(11, "holdout_a", 0),
                                 own_exposure(1, "exp_coverage_change", NORMAL_VARIANT)});
 }
+
+TEST_CASE("Holdouts: a logger that refreshes with the context's own data during variable_value keeps it",
+          "[holdouts][logger][refresh][variables]") {
+    auto first = with_variables(new_experiment(1, "exp_first"), "color");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    auto logger = std::make_shared<ExposureLog>();
+    bool refreshed = false;
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (!refreshed) {
+            refreshed = true;
+            context.refresh(context.data());
+        }
+    };
+    Context context(config_with(UID), data_of({}, {first, with_variables(new_experiment(2, "exp_second"), "color")}),
+                    logger);
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(context.data().experiments.size() == 2);
+    REQUIRE(context.treatment("exp_second") == NORMAL_VARIANT);
+}
+
+TEST_CASE("Holdouts: an overridden candidate's missing key is not a held-out fallback", "[holdouts][variables]") {
+    // The first candidate is held out but overridden to a variant without the key, so it neither
+    // wins nor decides the fallback; the second held-out candidate's control value does.
+    auto overridden = covered_by(new_experiment(1, "exp_overridden"), {11});
+    overridden.variants = {{"A", R"({"color":"override-control"})"}, {"B", R"({"other":1})"}};
+    auto held_out = with_variables(covered_by(new_experiment(2, "exp_held_out"), {11}), "color");
+    auto config = config_with(UID);
+    config.overrides["exp_overridden"] = 1;
+    const auto data = data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)}, {overridden, held_out});
+
+    Context peeking(config, data);
+    REQUIRE(peeking.peek_variable_value("color", "default") == "control");
+    Context context(config, data);
+    REQUIRE(context.variable_value("color", "default") == "control");
+}
