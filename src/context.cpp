@@ -331,10 +331,15 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
     // candidate list it started with, resolved against the live data, as in JS.
     WalkGuard walk(*this);
     const auto& candidates = var_it->second;
+    const int generation = data_seq_;
 
     for (const auto* candidate : candidates) {
         const std::string& name = candidate->data->name;
-        auto& assignment = get_or_create_assignment(name);
+        // Reuse the indexed candidate only while it is live. An exposure logger may
+        // refresh between candidates, in which case resolve the old name in the new index.
+        auto& assignment = generation == data_seq_
+            ? get_or_create_assignment(name, candidate)
+            : get_or_create_assignment(name);
         if (!assignment.has_variables) {
             continue;
         }
@@ -387,7 +392,7 @@ nlohmann::json Context::peek_variable_value(const std::string& key, const nlohma
 
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
-        auto& assignment = get_or_create_assignment(experiment_name);
+        auto& assignment = get_or_create_assignment(experiment_name, experiment_index);
 
         if (assignment.has_variables) {
             if (assignment.assigned || assignment.overridden || assignment.rule_override) {
@@ -694,11 +699,13 @@ void Context::refresh(const ContextData& new_data) {
     emit_event("refresh", refresh_data);
 }
 
-Assignment& Context::get_or_create_assignment(const std::string& experiment_name) {
+Assignment& Context::get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment) {
     bool has_custom = cassignments_.count(experiment_name) > 0;
     bool has_override = overrides_.count(experiment_name) > 0;
-    auto exp_it = index_.find(experiment_name);
-    const ExperimentIndex* experiment = (exp_it != index_.end()) ? &exp_it->second : nullptr;
+    if (experiment == nullptr) {
+        auto exp_it = index_.find(experiment_name);
+        experiment = (exp_it != index_.end()) ? &exp_it->second : nullptr;
+    }
 
     auto ass_it = assignments_.find(experiment_name);
     if (ass_it != assignments_.end()) {

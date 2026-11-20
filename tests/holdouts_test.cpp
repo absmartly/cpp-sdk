@@ -1,5 +1,6 @@
 #include "context_test_access.h"
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <absmartly/context.h>
 #include <absmartly/context_event_logger.h>
 #include <absmartly/hashing.h>
@@ -1839,6 +1840,39 @@ TEST_CASE("Holdouts: a refresh during variable_value does not re-walk the candid
     std::vector<std::string> names;
     for (const auto& exposure : logger->exposures) names.push_back(exposure["name"]);
     REQUIRE(names == std::vector<std::string>{"exp_first", "exp_second"});
+}
+
+TEST_CASE("Holdouts: a variable walk resolves remaining candidates against a refreshed index",
+          "[holdouts][variables][refresh]") {
+    auto first = with_variables(new_experiment(1, "exp_first"), "color");
+    first.split = {1.0, 0.0};
+    first.variants = {{"A", R"({"other":1})"}, {"B", R"({"color":"first"})"}};
+    auto second = with_variables(new_experiment(2, "exp_second"), "color");
+    const auto original = data_of({}, {first, second});
+    auto refreshed = original;
+    const bool removed = GENERATE(false, true);
+    if (removed) {
+        refreshed.experiments.pop_back();
+    } else {
+        refreshed.experiments[1].iteration++;
+        refreshed.experiments[1].variants[1].config = R"({"color":"refreshed"})";
+    }
+
+    auto logger = std::make_shared<ExposureLog>();
+    bool did_refresh = false;
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (!did_refresh) {
+            did_refresh = true;
+            context.refresh(refreshed);
+        }
+    };
+    Context context(config_with(UID), original, logger);
+    // Pre-cache the later candidate too: its old assignment must be revalidated, not
+    // merely its old variable index. Removing it must not revive the retired candidate.
+    REQUIRE(context.peek_variable_value("color", "default") == "treatment");
+    REQUIRE(context.variable_value("color", "default") == (removed ? "default" : "refreshed"));
+    REQUIRE(context.peek_variable_value("color", "default") == (removed ? "default" : "refreshed"));
+    REQUIRE(did_refresh);
 }
 
 TEST_CASE("Holdouts: decoding into reused models replaces holdouts and holdoutIds", "[holdouts][json]") {

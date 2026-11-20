@@ -159,7 +159,8 @@ private:
     // changes only CPU cost.
     friend struct ContextTestAccess;
 
-    Assignment& get_or_create_assignment(const std::string& experiment_name);
+    // A supplied index must belong to the live data generation; all validation still runs.
+    Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment = nullptr);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
     void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
     nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment);
