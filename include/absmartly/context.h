@@ -155,6 +155,10 @@ public:
     void refresh(const ContextData& new_data);
 
 private:
+    // Test-only hook, not supported API: lets the tests pin the read caches, whose loss
+    // changes only CPU cost.
+    friend struct ContextTestAccess;
+
     Assignment& get_or_create_assignment(const std::string& experiment_name);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
     void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
@@ -194,10 +198,8 @@ private:
     std::map<std::string, nlohmann::json> units_;
     std::vector<Attribute> attrs_;
     int attrs_seq_ = 0;
-    // get_attributes_map() memoised per attrs_seq_, as in JS.
     mutable nlohmann::json attrs_map_cache_;
     mutable int attrs_map_cache_seq_ = -1;
-    // Incremented by every data load (build_index), for Assignment::rule_data_seq.
     int data_seq_ = 0;
     // System attribute names from the client config; injected under the "application"
     // and "environment" keys when the audience evaluation map is built. Empty means
