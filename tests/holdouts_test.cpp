@@ -2025,9 +2025,10 @@ TEST_CASE("Holdouts: a covered call logs its own exposure, then its holdouts in 
     REQUIRE(pending_at_callback == std::vector<size_t>{3, 3, 3});
 }
 
-// Measured with this exact fixture and logger against main (1.0.0): 69. The count includes the
-// standard library's and nlohmann/json's allocations, so it holds only for the toolchain CI uses
-// (libstdc++, the bundled nlohmann/json); elsewhere only the exposures are checked.
+// Measured with this exact fixture and logger against main (1.0.0): 69, with GCC 15.2 and its
+// libstdc++ (CI's ubuntu-26.04 image) and the pinned nlohmann/json. The count includes the standard
+// library's and nlohmann/json's allocations, so it is asserted for that toolchain only; elsewhere
+// only the exposures are checked.
 constexpr long UNCOVERED_FIRST_TREATMENT_ALLOCATIONS = 69;
 
 TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdouts][cost]") {
@@ -2046,7 +2047,7 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
     const std::string name = "exp_plain";
     const long allocations = allocations_of([&] { context.treatment(name); });
     REQUIRE(logger->exposures == 2);
-#if defined(__GLIBCXX__)
+#if defined(__GLIBCXX__) && defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE == 15
     REQUIRE(allocations == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
 #else
     REQUIRE(allocations > 0);
