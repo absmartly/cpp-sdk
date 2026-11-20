@@ -20,8 +20,15 @@
   `variable_value()` could crash the call (the candidate list it walked was
   freed). The walk now continues over the candidates it started with, as in
   javascript-sdk.
+- An event logger that refreshed the context from an exposure and read the same
+  experiment again could change what the outer `treatment()`/`variable_value()`
+  returned; both now return the decision they exposed, as in javascript-sdk.
 
 ### Notes
+
+- New fields grow the public model and `Context` layouts. The package stays
+  source compatible within 1.x; rebuild everything that includes the SDK
+  headers when upgrading (see Installed Package in the README).
 
 - All exposures of one `treatment()`/`variable_value()` call on a covered
   experiment (its own and its holdouts') are queued before the event logger

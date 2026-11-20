@@ -2011,3 +2011,158 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
     REQUIRE(allocations_of([&] { context.treatment(name); }) == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
     REQUIRE(logger->exposures == 2);
 }
+
+// --- Marcio round 3 -----------------------------------------------------------------------------
+
+TEST_CASE("Holdouts: treatment returns its decision when the logger refreshes and re-resolves it",
+          "[holdouts][logger][refresh]") {
+    // The held-out decision is control. The holdout's logger refreshes to an iteration that is no
+    // longer covered and peeks the experiment, replacing the cached assignment with variant 1.
+    // As in JS, the outer call still returns the decision it exposed.
+    const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+    auto next = new_experiment(1, "exp_reentrant");
+    next.iteration = 2;
+    const auto refreshed = data_of({holdout}, {next});
+    int peeked = -1;
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (peeked < 0) {
+            context.refresh(refreshed);
+            peeked = context.peek("exp_reentrant");
+        }
+    };
+    Context context(config_with(UID), data_of({holdout}, {covered_by(new_experiment(1, "exp_reentrant"), {11})}),
+                    logger);
+
+    REQUIRE(context.treatment("exp_reentrant") == 0);
+    REQUIRE(peeked == NORMAL_VARIANT);
+    require_published(context, {holdout_exposure(11, "holdout_a", 0)});
+}
+
+TEST_CASE("Holdouts: variable_value returns its decision when the logger refreshes and re-resolves it",
+          "[holdouts][logger][refresh][variables]") {
+    const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+    auto next = with_variables(new_experiment(1, "exp_reentrant"), "color");
+    next.iteration = 2;
+    const auto refreshed = data_of({holdout}, {next});
+    json peeked;
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (peeked.is_null()) {
+            context.refresh(refreshed);
+            peeked = context.peek_variable_value("color", "default");
+        }
+    };
+    Context context(config_with(UID),
+                    data_of({holdout}, {with_variables(covered_by(new_experiment(1, "exp_reentrant"), {11}), "color")}),
+                    logger);
+
+    REQUIRE(context.variable_value("color", "default") == "control");
+    REQUIRE(peeked == "treatment");
+    require_published(context, {holdout_exposure(11, "holdout_a", 0)});
+}
+
+TEST_CASE("Holdouts: an assigned variable winner is returned even if the logger re-resolves it",
+          "[holdouts][logger][refresh][variables]") {
+    // Not held out: the experiment wins "treatment". Its logger refreshes into coverage that
+    // holds the unit out, so the cached assignment becomes suppressed control.
+    const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+    auto next = with_variables(covered_by(new_experiment(1, "exp_reentrant"), {11}), "color");
+    const auto refreshed = data_of({holdout}, {next});
+    json peeked;
+    auto logger = std::make_shared<ExposureLog>();
+    logger->on_exposure = [&](Context& context, const json&) {
+        if (peeked.is_null()) {
+            context.refresh(refreshed);
+            peeked = context.peek_variable_value("color", "default");
+        }
+    };
+    Context context(config_with(UID), data_of({holdout}, {with_variables(new_experiment(1, "exp_reentrant"), "color")}),
+                    logger);
+
+    REQUIRE(context.variable_value("color", "default") == "treatment");
+    REQUIRE(peeked == "control");
+}
+
+namespace {
+
+// count candidates sharing one variable key; the first wins it.
+ContextData shared_key_data(int count) {
+    std::vector<ExperimentData> experiments;
+    for (int i = 0; i < count; ++i) {
+        auto experiment = new_experiment(100 + i, "experiment_with_a_long_enough_name_to_allocate_" + std::to_string(i));
+        experiment.split = {1.0, 0.0};
+        experiment.variants = {{"A", R"({"number":7})"}, {"B", R"({"number":8})"}};
+        experiments.push_back(experiment);
+    }
+    experiments.push_back(new_experiment(1, "warm_up"));
+    return data_of({}, experiments);
+}
+
+} // namespace
+
+TEST_CASE("Holdouts: a first variable read does not cost per remaining candidate", "[holdouts][cost][variables]") {
+    // The first candidate wins, so the other candidates are never looked at; the cost must not
+    // grow with how many there are, with or without a logger.
+    const auto first_read = [](int count, bool with_logger) {
+        std::shared_ptr<ContextEventLogger> logger;
+        if (with_logger) logger = std::make_shared<ExposureLog>();
+        Context context(config_with(UID), shared_key_data(count), logger);
+        context.treatment("warm_up"); // hashes the unit and creates its assigner
+        const std::string key = "number";
+        const json fallback = 0;
+        json result;
+        const long cost = allocations_of([&] { result = context.variable_value(key, fallback); });
+        REQUIRE(result == 7);
+        return cost;
+    };
+    REQUIRE(first_read(1000, false) == first_read(2, false));
+    REQUIRE(first_read(1000, true) == first_read(2, true));
+}
+
+TEST_CASE("Holdouts: cached reads of a suppressed assignment skip its audience", "[holdouts][cost][cache]") {
+    auto experiment = covered_by(new_experiment(1, "exp_suppressed_audience"), {11});
+    experiment.audience = R"({"filter":[{"gte":[{"var":"age"},{"value":20}]},{"eq":[{"var":"tier"},{"value":"a long tier name"}]}]})";
+    Context context(config_with(UID), data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)},
+                                              {experiment}));
+    const std::string name = "exp_suppressed_audience";
+
+    REQUIRE(context.peek(name) == 0);
+    REQUIRE(allocations_of([&] {
+                for (int i = 0; i < 100; ++i) context.peek(name);
+            }) == 0);
+    context.set_attribute("unrelated", 1);
+    REQUIRE(allocations_of([&] { context.peek(name); }) == 0);
+    REQUIRE(allocations_of([&] { context.peek(name); }) == 0);
+    REQUIRE(context.treatment(name) == 0);
+    require_published(context, {holdout_exposure(11, "holdout_a", 0)});
+}
+
+TEST_CASE("Holdouts: a suppressed assignment with an audience still re-resolves when a rule starts matching",
+          "[holdouts][cache][rules]") {
+    auto experiment = covered_by(new_experiment(1, "exp_suppressed_rule"), {11});
+    experiment.audience = AGE_AUDIENCE;
+    experiment.assignmentRules = US_RULE;
+    Context context(config_with(UID), data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)},
+                                              {experiment}));
+    context.set_attribute("country", "GB");
+    REQUIRE(context.peek("exp_suppressed_rule") == 0);
+    context.set_attribute("country", "US");
+    REQUIRE(context.peek("exp_suppressed_rule") == 1);
+}
+
+TEST_CASE("Holdouts: removing coverage restores the normal assignment with a fresh exposure (scenario 225)",
+          "[holdouts][refresh]") {
+    const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+    const auto plain = new_experiment(1, "exp_coverage_change");
+    Context context(config_with(UID), data_of({holdout}, {plain}));
+
+    REQUIRE(context.treatment("exp_coverage_change") == NORMAL_VARIANT);
+    context.refresh(data_of({holdout}, {covered_by(plain, {11})}));
+    REQUIRE(context.treatment("exp_coverage_change") == 0);
+    context.refresh(data_of({holdout}, {plain}));
+    REQUIRE(context.treatment("exp_coverage_change") == NORMAL_VARIANT);
+    require_published(context, {own_exposure(1, "exp_coverage_change", NORMAL_VARIANT),
+                                holdout_exposure(11, "holdout_a", 0),
+                                own_exposure(1, "exp_coverage_change", NORMAL_VARIANT)});
+}

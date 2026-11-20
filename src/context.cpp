@@ -293,13 +293,16 @@ int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
 
     auto& assignment = get_or_create_assignment(experiment_name);
+    // Read before the exposure: its logger may refresh and re-resolve this assignment, and
+    // JS returns the decision it exposed.
+    const int variant = assignment.variant;
 
     if (!assignment.exposed) {
         assignment.exposed = true;
         trigger_exposures(experiment_name, assignment);
     }
 
-    return assignment.variant;
+    return variant;
 }
 
 int Context::peek(const std::string& experiment_name) {
@@ -323,57 +326,53 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
     bool has_suppressed_fallback = false;
     std::optional<nlohmann::json> suppressed_fallback;
 
-    // An exposure runs the event logger, which may refresh the context and replace the
-    // index walked here. Before the first exposure the remaining candidates' names are
-    // captured, and the walk goes on over them, resolved against the live data, as JS
-    // walks the candidate list it started with. Cached reads expose nothing and copy
-    // nothing.
+    // An exposure runs the event logger, which may refresh the context. The data and index
+    // a refresh replaces are kept until the outermost walk ends, so the walk goes on over the
+    // candidate list it started with, resolved against the live data, as in JS.
+    WalkGuard walk(*this);
     const auto& candidates = var_it->second;
-    std::vector<std::string> remaining;
-    bool captured = false;
-    size_t next = 0;
 
-    for (size_t i = 0;; ++i) {
-        const std::string* name = nullptr;
-        if (!captured) {
-            if (i >= candidates.size()) break;
-            name = &candidates[i]->data->name;
-        } else {
-            if (next >= remaining.size()) break;
-            name = &remaining[next++];
+    for (const auto* candidate : candidates) {
+        const std::string& name = candidate->data->name;
+        auto& assignment = get_or_create_assignment(name);
+        if (!assignment.has_variables) {
+            continue;
         }
 
-        auto& assignment = get_or_create_assignment(*name);
+        const bool wins = (assignment.assigned || assignment.overridden || assignment.rule_override) &&
+                          assignment.variables.count(key) > 0;
+        const bool falls_back = !wins && assignment.suppressed && !assignment.overridden &&
+                                !assignment.rule_override && !has_suppressed_fallback;
 
-        if (assignment.has_variables) {
-            if (!assignment.exposed) {
-                if (!captured) {
-                    // The current name is copied too, since a refresh may free the index
-                    // entry that owns it; the walk resumes after it.
-                    remaining.reserve(candidates.size() - i);
-                    for (size_t k = i; k < candidates.size(); ++k) {
-                        remaining.push_back(candidates[k]->data->name);
-                    }
-                    name = &remaining.front();
-                    next = 1;
-                    captured = true;
-                }
-                assignment.exposed = true;
-                trigger_exposures(*name, assignment);
-            }
-
-            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
-                assignment.variables.count(key) > 0) {
-                return assignment.variables.at(key);
-            }
-
-            if (assignment.suppressed && !assignment.overridden && !assignment.rule_override &&
-                !has_suppressed_fallback) {
+        if (!assignment.exposed) {
+            // The decision is taken before the exposure: its logger may re-resolve this
+            // assignment, and JS returns the value it exposed.
+            std::optional<nlohmann::json> value;
+            if (wins) {
+                value = assignment.variables.at(key);
+            } else if (falls_back) {
                 has_suppressed_fallback = true;
                 auto it = assignment.variables.find(key);
                 if (it != assignment.variables.end()) {
                     suppressed_fallback = it->second;
                 }
+            }
+            assignment.exposed = true;
+            trigger_exposures(name, assignment);
+            if (value.has_value()) {
+                return *value;
+            }
+            continue;
+        }
+
+        if (wins) {
+            return assignment.variables.at(key);
+        }
+        if (falls_back) {
+            has_suppressed_fallback = true;
+            auto it = assignment.variables.find(key);
+            if (it != assignment.variables.end()) {
+                suppressed_fallback = it->second;
             }
         }
     }
@@ -667,6 +666,10 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
+    if (walks_ > 0) {
+        // A variable_value() walk is iterating the current index; keep it alive until it ends.
+        retired_.push_back(RetiredData{std::move(data_), std::move(index_), std::move(index_variables_)});
+    }
     data_ = new_data;
     build_index();
     hashes_.clear();
@@ -1149,9 +1152,9 @@ bool Context::rule_matches(const ExperimentIndex& experiment, Assignment& assign
 }
 
 bool Context::audience_matches(const ExperimentData& experiment, Assignment& assignment) {
-    // A rule-won assignment never consulted the audience, so an audience change cannot
-    // make it stale.
-    if (assignment.rule_override) {
+    // A rule-won or held-out assignment never consulted the audience, so an audience change
+    // cannot make it stale.
+    if (assignment.rule_override || assignment.suppressed) {
         return true;
     }
 

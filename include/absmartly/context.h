@@ -9,6 +9,7 @@
 #include <absmartly/variant_assigner.h>
 #include <absmartly/hashing.h>
 #include <nlohmann/json.hpp>
+#include <list>
 #include <map>
 #include <utility>
 #include <set>
@@ -230,6 +231,26 @@ private:
     std::map<int, const HoldoutData*> holdouts_by_id_;
     // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
     std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
+
+    // Data and index replaced by a refresh while a variable_value() walk iterates them; freed
+    // when the outermost walk ends. A list, so a retired entry is never relocated.
+    struct RetiredData {
+        ContextData data;
+        std::map<std::string, ExperimentIndex> index;
+        std::map<std::string, std::vector<const ExperimentIndex*>> index_variables;
+    };
+    std::list<RetiredData> retired_;
+    int walks_ = 0;
+
+    struct WalkGuard {
+        explicit WalkGuard(Context& context) : context_(context) { ++context_.walks_; }
+        ~WalkGuard() {
+            if (--context_.walks_ == 0) context_.retired_.clear();
+        }
+        WalkGuard(const WalkGuard&) = delete;
+        WalkGuard& operator=(const WalkGuard&) = delete;
+        Context& context_;
+    };
 };
 
 } // namespace absmartly
