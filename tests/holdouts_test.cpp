@@ -2203,3 +2203,20 @@ TEST_CASE("Holdouts: an overridden candidate's missing key is not a held-out fal
     Context context(config, data);
     REQUIRE(context.variable_value("color", "default") == "control");
 }
+
+TEST_CASE("Holdouts: a rule-won candidate's missing key is not a held-out fallback", "[holdouts][variables][rules]") {
+    // The first candidate is held out but a rule wins it a variant without the key (as JS, a rule
+    // win is not a fallback); the second held-out candidate's control value decides.
+    auto rule_won = covered_by(new_experiment(1, "exp_rule_won"), {11});
+    rule_won.assignmentRules = US_RULE;
+    rule_won.variants = {{"A", R"({"color":"rule-control"})"}, {"B", R"({"other":1})"}};
+    auto held_out = with_variables(covered_by(new_experiment(2, "exp_held_out"), {11}), "color");
+    const auto data = data_of({new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO)}, {rule_won, held_out});
+
+    Context peeking(config_with(UID), data);
+    peeking.set_attribute("country", "US");
+    REQUIRE(peeking.peek_variable_value("color", "default") == "control");
+    Context context(config_with(UID), data);
+    context.set_attribute("country", "US");
+    REQUIRE(context.variable_value("color", "default") == "control");
+}
