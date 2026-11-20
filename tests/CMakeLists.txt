@@ -26,8 +26,7 @@ target_compile_definitions(absmartly_tests PRIVATE ABSMARTLY_PROJECT_VERSION="${
 
 include(CTest)
 include(Catch)
-# Catch2 exits 4 when every selected test is skipped; ctest runs one test per process.
-catch_discover_tests(absmartly_tests PROPERTIES SKIP_RETURN_CODE 4)
+catch_discover_tests(absmartly_tests)
 target_compile_definitions(absmartly_tests PRIVATE ABSMARTLY_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 # Public headers stay clean under strict consumer warnings.

@@ -2027,7 +2027,7 @@ TEST_CASE("Holdouts: a covered call logs its own exposure, then its holdouts in 
 
 // Measured with this exact fixture and logger against main (1.0.0): 69. The count includes the
 // standard library's and nlohmann/json's allocations, so it holds only for the toolchain CI uses
-// (libstdc++, the bundled nlohmann/json); elsewhere the test is skipped.
+// (libstdc++, the bundled nlohmann/json); elsewhere only the exposures are checked.
 constexpr long UNCOVERED_FIRST_TREATMENT_ALLOCATIONS = 69;
 
 TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdouts][cost]") {
@@ -2049,7 +2049,7 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
 #if defined(__GLIBCXX__)
     REQUIRE(allocations == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
 #else
-    SKIP("allocation count measured for libstdc++ only, got " << allocations);
+    REQUIRE(allocations > 0);
 #endif
 }
 
