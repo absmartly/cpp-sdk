@@ -2533,12 +2533,13 @@ TEST_CASE("Holdouts: ExperimentData keeps its 1.0.0 structured-binding shape", "
     REQUIRE(&experiments == &data.experiments);
 }
 
-TEST_CASE("Holdouts: a refresh whose payload copy fails leaves the installed data usable",
+TEST_CASE("Holdouts: a refresh that fails while copying or indexing leaves the installed data usable",
           "[holdouts][refresh]") {
     // Each allocation of the payload copy, then the first allocations of indexing it, is made to
     // fail; whichever one throws, the context keeps serving the data it had, through a valid
     // index. (Not further: nlohmann's json destructor allocates while noexcept, so a failure deep
-    // in indexing terminates.)
+    // in indexing terminates. Measured on GCC 15.2: the copy takes 18 allocations, failures up to
+    // 32 throw cleanly and 33 aborts, so copy + 8 = 26 leaves a margin of 6.)
     const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
     const auto installed = data_of({holdout}, {with_variables(new_experiment(1, "exp_old"), "color")});
     const auto incoming = data_of({holdout, new_holdout(12, "holdout_b", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO)},
