@@ -9,7 +9,10 @@
 #include <absmartly/variant_assigner.h>
 #include <absmartly/hashing.h>
 #include <nlohmann/json.hpp>
+#include <cstdint>
+#include <list>
 #include <map>
+#include <utility>
 #include <set>
 #include <vector>
 #include <string>
@@ -18,6 +21,27 @@
 #include <future>
 
 namespace absmartly {
+
+// A unit's arm in one holdout, cached per (holdout id, unit type) while the
+// holdout's iteration is unchanged. The arm count is pinned with the arm: arm 1
+// means something else in a 2-arm and a 3-arm holdout.
+struct HoldoutAssignment {
+    int id = 0;
+    int iteration = 0;
+    std::string unit_type;
+    int variant = 0;
+    size_t arm_count = 0;
+    bool exposed = false;
+};
+
+// A holdout covering an experiment, as it was when the assignment was resolved.
+// `assignment` is null when the experiment's unit was missing.
+struct HoldoutPin {
+    int id = 0;
+    int iteration = 0;
+    std::string name;
+    std::shared_ptr<HoldoutAssignment> assignment;
+};
 
 struct Assignment {
     int id = 0;
@@ -49,6 +73,10 @@ struct Assignment {
     std::map<std::string, nlohmann::json> variables;
     bool has_variables = false;
     int attrs_seq = 0;
+    bool suppressed = false;
+    // The holdouts covering the experiment when this was resolved, in id order;
+    // null when there are none. Exposures fire from these, never re-resolved.
+    std::shared_ptr<const std::vector<HoldoutPin>> holdouts;
 };
 
 struct ExperimentIndex {
@@ -56,6 +84,7 @@ struct ExperimentIndex {
     std::vector<std::map<std::string, nlohmann::json>> variables;
     // data->assignmentRules parsed once; null when there are none or they are invalid.
     nlohmann::json assignment_rules;
+    std::vector<const HoldoutData*> holdouts; // Sorted by id, unique; non-owning, like data.
 };
 
 struct RuleResolution {
@@ -131,8 +160,13 @@ private:
     // changes only CPU cost.
     friend struct ContextTestAccess;
 
-    Assignment& get_or_create_assignment(const std::string& experiment_name);
+    // A supplied index must belong to the live data generation; all validation still runs.
+    Assignment& get_or_create_assignment(const std::string& experiment_name, const ExperimentIndex* experiment = nullptr);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
+    void trigger_exposures(const std::string& experiment_name, const Assignment& assignment);
+    nlohmann::json enqueue_exposure(const std::string& experiment_name, const Assignment& assignment);
+    std::shared_ptr<HoldoutAssignment> get_holdout_assignment(const HoldoutData& holdout, const std::string& unit_type);
+    static bool holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment);
 
     void build_index();
 
@@ -196,6 +230,43 @@ private:
     std::future<ContextData> data_future_;
 
     AudienceMatcher audience_matcher_;
+
+    // Non-owning pointers into data_.
+    std::map<int, const HoldoutData*> holdouts_by_id_;
+    // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
+    std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
+
+    // The data and index generation (data_seq_) each active variable_value() walk iterates,
+    // innermost last. A refresh retires the current generation only while a walk still
+    // iterates it; it is freed when the last such walk ends.
+    struct RetiredData {
+        int generation = 0;
+        ContextData data;
+        std::map<std::string, ExperimentIndex> index;
+        std::map<std::string, std::vector<const ExperimentIndex*>> index_variables;
+    };
+    std::list<RetiredData> retired_;
+    std::vector<int> walk_generations_;
+    // Name lookups in get_or_create_assignment(); variable reads reuse their indexed entry.
+    std::uint64_t index_lookups_ = 0;
+
+    struct WalkGuard {
+        explicit WalkGuard(Context& context) : context_(context) {}
+        void start() {
+            if (!active_ && context_.event_handler_) {
+                context_.walk_generations_.push_back(context_.data_seq_);
+                active_ = true;
+            }
+        }
+        ~WalkGuard() {
+            if (active_) context_.end_walk();
+        }
+        WalkGuard(const WalkGuard&) = delete;
+        WalkGuard& operator=(const WalkGuard&) = delete;
+        Context& context_;
+        bool active_ = false;
+    };
+    void end_walk();
 };
 
 } // namespace absmartly
