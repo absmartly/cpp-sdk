@@ -15,6 +15,16 @@ int main() {
     auto&& [moved_experiments] = std::move(data);
     if (&experiments != &data.experiments || &const_experiments != &data.experiments ||
         &moved_experiments != &data.experiments || !copied_experiments.empty()) return 2;
+    absmartly::ExperimentData released;
+    released.name = "released";
+    released.assignmentRules = "rules";
+    auto& [id, name, unitType, iteration, seedHi, seedLo, split, seedStrictMode, trafficSeedHi, trafficSeedLo,
+           trafficSplit, fullOnVariant, audience, variants, audienceStrict, customFieldValues, application,
+           environment, assignmentRules] = released;
+    const auto& [const_id, const_name, cu, ci, csh, csl, cs, cssm, ctsh, ctsl, cts, cfov, ca, cv, cas, ccfv, capp,
+                 cenv, const_rules] = std::as_const(released);
+    if (&name != &released.name || &assignmentRules != &released.assignmentRules ||
+        &const_rules != &released.assignmentRules || name != "released") return 3;
     absmartly::ExperimentData exp;
     exp.id = 1;
     exp.name = "exp";

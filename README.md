@@ -69,9 +69,10 @@ target_link_libraries(your_target PRIVATE absmartly::absmartly-sdk)
 The package's version check (`SameMajorVersion`) selects a package with the
 same major version; it is not a binary-compatibility guarantee. Public types
 such as `ContextData`, `ExperimentData` and `Context` gain fields in 1.1.0.
-Existing positional initializers remain valid, and `ContextData` keeps its
-one-element structured-binding shape (`auto& [experiments] = data`); access
-holdouts by name through `data.holdouts`. The binary layout changes, so rebuild
+Existing positional initializers remain valid, and `ContextData` and
+`ExperimentData` keep their 1.0.0 structured-binding shapes (`auto&
+[experiments] = data`, and the 19 released `ExperimentData` members); access
+the new holdout fields by name. The binary layout changes, so rebuild
 your application and every library that includes the SDK headers against the
 SDK version you link. Do not mix objects compiled against different SDK versions.
 

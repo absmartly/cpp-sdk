@@ -81,6 +81,75 @@ struct ExperimentData {
     std::string holdoutType;
 };
 
+namespace detail {
+// The 19 members ExperimentData had in 1.0.0, in order, for its structured bindings.
+template <std::size_t I, typename E>
+decltype(auto) experiment_member(E& e) noexcept {
+    static_assert(I < 19, "ExperimentData has 19 structured-binding elements");
+    if constexpr (I == 0) {
+        return (e.id);
+    } else if constexpr (I == 1) {
+        return (e.name);
+    } else if constexpr (I == 2) {
+        return (e.unitType);
+    } else if constexpr (I == 3) {
+        return (e.iteration);
+    } else if constexpr (I == 4) {
+        return (e.seedHi);
+    } else if constexpr (I == 5) {
+        return (e.seedLo);
+    } else if constexpr (I == 6) {
+        return (e.split);
+    } else if constexpr (I == 7) {
+        return (e.seedStrictMode);
+    } else if constexpr (I == 8) {
+        return (e.trafficSeedHi);
+    } else if constexpr (I == 9) {
+        return (e.trafficSeedLo);
+    } else if constexpr (I == 10) {
+        return (e.trafficSplit);
+    } else if constexpr (I == 11) {
+        return (e.fullOnVariant);
+    } else if constexpr (I == 12) {
+        return (e.audience);
+    } else if constexpr (I == 13) {
+        return (e.variants);
+    } else if constexpr (I == 14) {
+        return (e.audienceStrict);
+    } else if constexpr (I == 15) {
+        return (e.customFieldValues);
+    } else if constexpr (I == 16) {
+        return (e.application);
+    } else if constexpr (I == 17) {
+        return (e.environment);
+    } else if constexpr (I == 18) {
+        return (e.assignmentRules);
+    }
+}
+} // namespace detail
+
+// Keep the 19-element structured-binding shape published in 1.0.0; holdoutIds and
+// holdoutType are reached by name.
+template <std::size_t I>
+decltype(auto) get(ExperimentData& e) noexcept {
+    return detail::experiment_member<I>(e);
+}
+
+template <std::size_t I>
+decltype(auto) get(const ExperimentData& e) noexcept {
+    return detail::experiment_member<I>(e);
+}
+
+template <std::size_t I>
+decltype(auto) get(ExperimentData&& e) noexcept {
+    return std::move(detail::experiment_member<I>(e));
+}
+
+template <std::size_t I>
+decltype(auto) get(const ExperimentData&& e) noexcept {
+    return std::move(detail::experiment_member<I>(e));
+}
+
 inline void to_json(nlohmann::json& j, const ExperimentData& e) {
     j = nlohmann::json{
         {"id", e.id},
@@ -486,6 +555,14 @@ inline void from_json(const nlohmann::json& j, PublishEvent& p) {
 } // namespace absmartly
 
 namespace std {
+
+template <>
+struct tuple_size<absmartly::ExperimentData> : integral_constant<size_t, 19> {};
+
+template <size_t I>
+struct tuple_element<I, absmartly::ExperimentData> {
+    using type = remove_reference_t<decltype(absmartly::get<I>(declval<absmartly::ExperimentData&>()))>;
+};
 
 template <>
 struct tuple_size<absmartly::ContextData> : integral_constant<size_t, 1> {};
