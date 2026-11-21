@@ -169,6 +169,11 @@ private:
     static bool holdouts_match(const ExperimentIndex& experiment, const Assignment& assignment);
 
     void build_index();
+    // Indexes data into the given maps (pointers into data) and collects variant parse errors;
+    // touches no member, so a throw leaves the context unchanged.
+    static void index_data(const ContextData& data, std::map<std::string, ExperimentIndex>& index,
+                           std::map<std::string, std::vector<const ExperimentIndex*>>& index_variables,
+                           std::vector<nlohmann::json>& errors);
 
     bool experiment_matches(const ExperimentData& experiment, const Assignment& assignment) const;
     bool audience_matches(const ExperimentData& experiment, Assignment& assignment);
@@ -231,8 +236,6 @@ private:
 
     AudienceMatcher audience_matcher_;
 
-    // Non-owning pointers into data_.
-    std::map<int, const HoldoutData*> holdouts_by_id_;
     // Kept across refreshes so a holdout exposure fires once per (id, unit type) and iteration.
     std::map<std::pair<int, std::string>, std::shared_ptr<HoldoutAssignment>> holdout_assignments_;
 

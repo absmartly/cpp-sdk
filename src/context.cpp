@@ -672,23 +672,33 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
+    // The payload is copied and indexed before anything is installed, so a failure (bad_alloc)
+    // leaves the installed data and its index untouched. new_data may be data() itself.
+    ContextData installed = new_data;
+    std::map<std::string, ExperimentIndex> index;
+    std::map<std::string, std::vector<const ExperimentIndex*>> index_variables;
+    std::vector<nlohmann::json> errors;
+    index_data(installed, index, index_variables, errors);
     if (std::find(walk_generations_.begin(), walk_generations_.end(), data_seq_) != walk_generations_.end()) {
         // A variable_value() walk iterates the current index; keep it until that walk ends.
-        // Copied first: new_data may be data() itself. The node is allocated before anything
-        // moves, so a failed allocation leaves the live index intact.
-        ContextData installed = new_data;
+        // The node is allocated before anything moves into it.
         auto& retired = retired_.emplace_back();
         retired.generation = data_seq_;
         retired.data = std::move(data_);
         retired.index = std::move(index_);
         retired.index_variables = std::move(index_variables_);
-        data_ = std::move(installed);
-    } else {
-        data_ = new_data;
     }
-    build_index();
+    // Moving keeps the element addresses the new index points to.
+    data_ = std::move(installed);
+    index_ = std::move(index);
+    index_variables_ = std::move(index_variables);
+    ++data_seq_;
     hashes_.clear();
     assigners_.clear();
+
+    for (const auto& error : errors) {
+        emit_event("error", error);
+    }
 
     nlohmann::json refresh_data;
     nlohmann::json refresh_exps = nlohmann::json::array();
@@ -994,29 +1004,26 @@ nlohmann::json Context::enqueue_exposure(const std::string& experiment_name, con
     return exposure_data;
 }
 
-void Context::build_index() {
-    ++data_seq_;
-    index_.clear();
-    index_variables_.clear();
-    holdouts_by_id_.clear();
-    // Reported once the index is complete: a logger may refresh from the error event.
-    std::vector<nlohmann::json> errors;
+void Context::index_data(const ContextData& data, std::map<std::string, ExperimentIndex>& index,
+                         std::map<std::string, std::vector<const ExperimentIndex*>>& index_variables,
+                         std::vector<nlohmann::json>& errors) {
+    std::map<int, const HoldoutData*> holdouts_by_id;
 
     // A holdout without a split cannot be assigned, so it covers nothing.
-    for (const auto& holdout : data_.holdouts) {
+    for (const auto& holdout : data.holdouts) {
         if (!holdout.split.empty()) {
-            holdouts_by_id_[holdout.id] = &holdout;
+            holdouts_by_id[holdout.id] = &holdout;
         }
     }
 
-    for (const auto& exp : data_.experiments) {
+    for (const auto& exp : data.experiments) {
         ExperimentIndex entry;
         entry.data = &exp;
 
         // Dangling ids are ignored and duplicates collapse, as in javascript-sdk.
         for (int holdout_id : exp.holdoutIds) {
-            auto holdout_it = holdouts_by_id_.find(holdout_id);
-            if (holdout_it == holdouts_by_id_.end()) {
+            auto holdout_it = holdouts_by_id.find(holdout_id);
+            if (holdout_it == holdouts_by_id.end()) {
                 continue;
             }
             auto pos = std::lower_bound(entry.holdouts.begin(), entry.holdouts.end(), holdout_id,
@@ -1064,13 +1071,13 @@ void Context::build_index() {
             entry.variables.push_back(std::move(parsed));
         }
 
-        index_[exp.name] = std::move(entry);
+        index[exp.name] = std::move(entry);
     }
 
-    for (auto& [exp_name, entry] : index_) {
+    for (auto& [exp_name, entry] : index) {
         for (const auto& var_map : entry.variables) {
             for (const auto& [key, _] : var_map) {
-                auto& vec = index_variables_[key];
+                auto& vec = index_variables[key];
                 auto pos = std::lower_bound(vec.begin(), vec.end(), entry.data->id,
                     [](const ExperimentIndex* existing, int id) { return existing->data->id < id; });
                 if (pos == vec.end() || (*pos)->data->id != entry.data->id) {
@@ -1080,6 +1087,17 @@ void Context::build_index() {
         }
     }
 
+}
+
+void Context::build_index() {
+    std::map<std::string, ExperimentIndex> index;
+    std::map<std::string, std::vector<const ExperimentIndex*>> index_variables;
+    std::vector<nlohmann::json> errors;
+    index_data(data_, index, index_variables, errors);
+    index_ = std::move(index);
+    index_variables_ = std::move(index_variables);
+    ++data_seq_;
+    // Reported once the index is installed: a logger may refresh from the error event.
     for (const auto& error : errors) {
         emit_event("error", error);
     }

@@ -17,9 +17,12 @@
 
 // Counts heap allocations so tests can pin the cost of the holdout paths.
 static std::atomic<long> g_allocations{0};
+// When positive, the allocation that brings it to zero throws (one-shot failure injection).
+static std::atomic<long> g_fail_after{0};
 
 void* operator new(std::size_t size) {
     ++g_allocations;
+    if (g_fail_after.load() > 0 && --g_fail_after == 0) throw std::bad_alloc();
     if (void* p = std::malloc(size ? size : 1)) return p;
     throw std::bad_alloc();
 }
@@ -2028,9 +2031,9 @@ TEST_CASE("Holdouts: a covered call logs its own exposure, then its holdouts in 
 }
 
 // Measured with this exact fixture and logger against main (1.0.0): 69, with GCC 15.2 and its
-// libstdc++ (CI's ubuntu-26.04 image) and the pinned nlohmann/json. The count includes the standard
-// library's and nlohmann/json's allocations, so it is asserted for that toolchain only; elsewhere
-// only the exposures are checked.
+// libstdc++ 15 (CI's ubuntu-26.04 image) and the pinned nlohmann/json. The count includes the
+// standard library's and nlohmann/json's allocations, so it is asserted for exactly that compiler
+// and library; elsewhere only the exposures are checked.
 constexpr long UNCOVERED_FIRST_TREATMENT_ALLOCATIONS = 69;
 
 TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdouts][cost]") {
@@ -2049,7 +2052,8 @@ TEST_CASE("Holdouts: an uncovered first exposure allocates as on 1.0.0", "[holdo
     const std::string name = "exp_plain";
     const long allocations = allocations_of([&] { context.treatment(name); });
     REQUIRE(logger->exposures == 2);
-#if defined(__GLIBCXX__) && defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE == 15
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ == 15 && __GNUC_MINOR__ == 2 && \
+    defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE == 15
     REQUIRE(allocations == UNCOVERED_FIRST_TREATMENT_ALLOCATIONS);
 #else
     REQUIRE(allocations > 0);
@@ -2527,4 +2531,30 @@ TEST_CASE("Holdouts: ExperimentData keeps its 1.0.0 structured-binding shape", "
     ContextData data;
     auto& [experiments] = data;
     REQUIRE(&experiments == &data.experiments);
+}
+
+TEST_CASE("Holdouts: a refresh whose payload copy fails leaves the installed data usable",
+          "[holdouts][refresh]") {
+    // Each allocation of the payload copy in turn is made to fail; whichever one throws, the
+    // context keeps serving the data it had, through a valid index. (Only the copy: nlohmann's
+    // json destructor allocates while noexcept, so failures later in indexing would terminate.)
+    const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
+    const auto installed = data_of({holdout}, {with_variables(new_experiment(1, "exp_old"), "color")});
+    const auto incoming = data_of({holdout, new_holdout(12, "holdout_b", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO)},
+                                  {with_variables(new_experiment(2, "exp_new"), "color"),
+                                   with_variables(new_experiment(3, "exp_new_2"), "shape")});
+    const long copy_allocations = allocations_of([&] { ContextData copy = incoming; });
+    REQUIRE(copy_allocations > 4);
+
+    for (long fail_at = 1; fail_at <= copy_allocations; ++fail_at) {
+        INFO("allocation " << fail_at << " of the payload copy failed");
+        Context context(config_with(UID_NOT_HELD_OUT), installed);
+        g_fail_after = fail_at;
+        REQUIRE_THROWS_AS(context.refresh(incoming), std::bad_alloc);
+        g_fail_after = 0;
+        REQUIRE(context.data().experiments.size() == 1);
+        REQUIRE(context.data().holdouts.size() == 1);
+        REQUIRE(context.peek("exp_old") == 0);
+        REQUIRE(context.peek_variable_value("color", "default") == "control");
+    }
 }
