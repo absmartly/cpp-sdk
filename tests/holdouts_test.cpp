@@ -2535,9 +2535,10 @@ TEST_CASE("Holdouts: ExperimentData keeps its 1.0.0 structured-binding shape", "
 
 TEST_CASE("Holdouts: a refresh whose payload copy fails leaves the installed data usable",
           "[holdouts][refresh]") {
-    // Each allocation of the payload copy in turn is made to fail; whichever one throws, the
-    // context keeps serving the data it had, through a valid index. (Only the copy: nlohmann's
-    // json destructor allocates while noexcept, so failures later in indexing would terminate.)
+    // Each allocation of the payload copy, then the first allocations of indexing it, is made to
+    // fail; whichever one throws, the context keeps serving the data it had, through a valid
+    // index. (Not further: nlohmann's json destructor allocates while noexcept, so a failure deep
+    // in indexing terminates.)
     const auto holdout = new_holdout(11, "holdout_a", HOLDOUT_A_SEED_HI, HOLDOUT_A_SEED_LO);
     const auto installed = data_of({holdout}, {with_variables(new_experiment(1, "exp_old"), "color")});
     const auto incoming = data_of({holdout, new_holdout(12, "holdout_b", HOLDOUT_B_SEED_HI, HOLDOUT_B_SEED_LO)},
@@ -2546,8 +2547,8 @@ TEST_CASE("Holdouts: a refresh whose payload copy fails leaves the installed dat
     const long copy_allocations = allocations_of([&] { ContextData copy = incoming; });
     REQUIRE(copy_allocations > 4);
 
-    for (long fail_at = 1; fail_at <= copy_allocations; ++fail_at) {
-        INFO("allocation " << fail_at << " of the payload copy failed");
+    for (long fail_at = 1; fail_at <= copy_allocations + 8; ++fail_at) {
+        INFO("allocation " << fail_at << " of the refresh failed");
         Context context(config_with(UID_NOT_HELD_OUT), installed);
         g_fail_after = fail_at;
         REQUIRE_THROWS_AS(context.refresh(incoming), std::bad_alloc);
