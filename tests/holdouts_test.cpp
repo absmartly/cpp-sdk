@@ -12,6 +12,8 @@
 #include <functional>
 #include <new>
 #include <sstream>
+#include <tuple>
+#include <type_traits>
 
 // Counts heap allocations so tests can pin the cost of the holdout paths.
 static std::atomic<long> g_allocations{0};
@@ -2486,4 +2488,43 @@ TEST_CASE("Holdouts: variable reads reuse each candidate's index entry", "[holdo
     REQUIRE(ContextTestAccess::index_lookups(context) == before);
     context.peek("exp_second");
     REQUIRE(ContextTestAccess::index_lookups(context) == before + 1);
+}
+
+TEST_CASE("Holdouts: ExperimentData keeps its 1.0.0 structured-binding shape", "[holdouts][compat]") {
+    static_assert(std::tuple_size_v<ExperimentData> == 19);
+    static_assert(std::is_same_v<std::tuple_element_t<0, ExperimentData>, int>);
+    static_assert(std::is_same_v<std::tuple_element_t<4, ExperimentData>, int32_t>);
+    static_assert(std::is_same_v<std::tuple_element_t<12, ExperimentData>, json>);
+    static_assert(std::is_same_v<std::tuple_element_t<18, ExperimentData>, std::string>);
+    static_assert(std::is_same_v<decltype(get<1>(std::declval<ExperimentData&>())), std::string&>);
+    static_assert(std::is_same_v<decltype(get<1>(std::declval<const ExperimentData&>())), const std::string&>);
+    static_assert(std::is_same_v<decltype(get<1>(std::declval<ExperimentData&&>())), std::string&&>);
+    static_assert(std::is_same_v<decltype(get<1>(std::declval<const ExperimentData&&>())), const std::string&&>);
+
+    ExperimentData e;
+    auto& [id, name, unitType, iteration, seedHi, seedLo, split, seedStrictMode, trafficSeedHi, trafficSeedLo,
+           trafficSplit, fullOnVariant, audience, variants, audienceStrict, customFieldValues, application,
+           environment, assignmentRules] = e;
+    const std::vector<const void*> bound = {&id, &name, &unitType, &iteration, &seedHi, &seedLo, &split,
+                                            &seedStrictMode, &trafficSeedHi, &trafficSeedLo, &trafficSplit,
+                                            &fullOnVariant, &audience, &variants, &audienceStrict,
+                                            &customFieldValues, &application, &environment, &assignmentRules};
+    const std::vector<const void*> members = {&e.id, &e.name, &e.unitType, &e.iteration, &e.seedHi, &e.seedLo,
+                                              &e.split, &e.seedStrictMode, &e.trafficSeedHi, &e.trafficSeedLo,
+                                              &e.trafficSplit, &e.fullOnVariant, &e.audience, &e.variants,
+                                              &e.audienceStrict, &e.customFieldValues, &e.application,
+                                              &e.environment, &e.assignmentRules};
+    REQUIRE(bound == members);
+
+    ExperimentData source;
+    source.name = "moved";
+    auto&& [mid, moved_name, mu, mi, msh, msl, ms, mssm, mtsh, mtsl, mts, mfov, ma, mv, mas, mcfv, mapp, menv, mr] =
+        std::move(source);
+    std::string taken = std::move(moved_name);
+    REQUIRE(taken == "moved");
+    REQUIRE(source.name.empty());
+
+    ContextData data;
+    auto& [experiments] = data;
+    REQUIRE(&experiments == &data.experiments);
 }

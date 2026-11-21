@@ -466,6 +466,10 @@ in the Web Console and arrive with the context data
   or `peek_variable_value()` before the unit is set is fine: the decision is
   made again once the unit arrives.
 
+Holdout ids are integers on the wire. A holdout id sent as a string (`"11"`)
+is ignored here, whereas javascript-sdk coerces it; the Collector never sends
+one.
+
 Payloads without holdouts behave exactly as before.
 
 ### Semantic Version Operators
