@@ -1,6 +1,49 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (unreleased)
+
+### Added
+
+- Holdouts (`ContextData::holdouts`, `HoldoutData`, `ExperimentData::holdoutIds`
+  and `ExperimentData::holdoutType`, all new fields appended last and empty by
+  default). An experiment covered by a holdout that holds the unit out
+  (arm 0, or arm 1 of a three-arm holdout for an experiment that is not
+  full-on) returns variant 0 with control variables and publishes no exposure
+  of its own; each covering holdout publishes one ordinary exposure per unit
+  type. Overrides and matching assignment rules win over a holdout. Payloads
+  without holdouts assign and publish exactly as before. Ports javascript-sdk#65
+  and java-sdk#12.
+
+### Fixed
+
+- An event logger that called `refresh()` from an exposure inside
+  `variable_value()` could crash the call (the candidate list it walked was
+  freed). The walk now continues over the candidates it started with, as in
+  javascript-sdk.
+- A holdout arm is chosen with javascript-sdk's probability scale, so a unit
+  whose hash lands exactly on a split boundary gets the same arm in every SDK.
+- An event logger that refreshed the context from an exposure and read the same
+  experiment again could change what the outer `treatment()`/`variable_value()`
+  returned; both now return the decision they exposed, as in javascript-sdk.
+
+### Notes
+
+- New fields grow the public model and `Context` layouts; rebuild everything
+  that includes the SDK headers when upgrading (see Installed Package in the
+  README). `ContextData` and `ExperimentData` keep their 1.0.0
+  structured-binding shapes (1 and 19 elements); reach `holdouts`,
+  `holdoutIds` and `holdoutType` by name. Code that
+  aggregate-initializes `ExperimentData` or `ContextData` positionally still
+  compiles, but `-Wextra` reports the appended fields as missing initializers.
+
+- All exposures of one `treatment()`/`variable_value()` call on a covered
+  experiment (its own and its holdouts') are queued before the event logger
+  sees the first of them, so a logger that calls `finalize()` or `publish()`
+  from that callback sends them all. javascript-sdk queues each one just
+  before its callback, and there such a logger leaves the holdout exposures
+  pending.
+
+## 1.0.0
 
 ### Added
 

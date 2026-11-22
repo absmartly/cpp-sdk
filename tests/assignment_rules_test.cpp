@@ -1,3 +1,4 @@
+#include "context_test_access.h"
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/audience_matcher.h>
 #include <absmartly/context.h>
@@ -516,14 +517,7 @@ TEST_CASE("Assignment rules: caching", "[assignment-rules]") {
     }
 }
 
-namespace absmartly {
-struct ContextTestAccess {
-    static Assignment& assignment(Context& ctx, const char* name) { return ctx.assignments_.at(name); }
-    static int data_seq(const Context& ctx) { return ctx.data_seq_; }
-    static const json& attributes_map(const Context& ctx) { return ctx.get_attributes_map(); }
-    static json& attributes_map_cache(Context& ctx) { return ctx.attrs_map_cache_; }
-};
-} // namespace absmartly
+
 
 // Losing these caches changes only CPU cost, so the tests poke a stale value into the
 // cached state and check whether a read recomputes it.

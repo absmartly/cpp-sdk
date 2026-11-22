@@ -66,6 +66,16 @@ find_package(absmartly-sdk 1.0 REQUIRED)
 target_link_libraries(your_target PRIVATE absmartly::absmartly-sdk)
 ```
 
+The package's version check (`SameMajorVersion`) selects a package with the
+same major version; it is not a binary-compatibility guarantee. Public types
+such as `ContextData`, `ExperimentData` and `Context` gain fields in 1.1.0.
+Existing positional initializers remain valid, and `ContextData` and
+`ExperimentData` keep their 1.0.0 structured-binding shapes (`auto&
+[experiments] = data`, and the 19 released `ExperimentData` members); access
+the new holdout fields by name. The binary layout changes, so rebuild
+your application and every library that includes the SDK headers against the
+SDK version you link. Do not mix objects compiled against different SDK versions.
+
 ## Getting Started
 
 Please follow the [installation](#installation) instructions before trying the following code.
@@ -421,6 +431,46 @@ have one percentage per variant, it is ignored and normal assignment applies;
 later rules are not tried. Rules that are malformed in any other way are
 skipped. Rule-assigned exposures are flagged `ruleOverride` so the backend can
 exclude them from analysis.
+
+### Holdouts
+
+A holdout keeps a share of your units out of a group of experiments, so you can
+measure the combined effect of everything the group ships. Holdouts are set up
+in the Web Console and arrive with the context data
+(`ContextData::holdouts`); each experiment lists the holdouts covering it in
+`ExperimentData::holdoutIds`. There is nothing to call: `treatment()`,
+`peek()`, `variable_value()` and `peek_variable_value()` apply them.
+
+- The unit is randomised into one of the holdout's arms with the covered
+  experiment's unit type. Arm 0 holds the unit out. A holdout with three arms
+  (a three-way split) also holds the unit out at arm 1, but only of covered
+  experiments that are not full-on; full-on experiments keep their full-on
+  variant there. Any other arm leaves the experiment to its normal assignment.
+- A unit held out by any one of an experiment's holdouts gets variant 0, and
+  the experiment publishes no exposure of its own. A holdout beats audience
+  targeting, full-on and custom assignments. `set_override()` and a matching
+  assignment rule still win over it.
+- For a variable key, an experiment the unit is assigned to (or overridden or
+  rule-assigned in) wins over a held-out one. The held-out experiment's
+  control value is the fallback when no other experiment wins the key.
+- The first `treatment()` or `variable_value()` on a covered experiment also
+  publishes one exposure for each covering holdout (its id, name and arm), once
+  per holdout and unit type. `peek()` and `peek_variable_value()` publish
+  nothing.
+- The arm is kept until the holdout's iteration changes; other edits to the
+  holdout do not re-randomise the unit.
+- Set the unit of each covered experiment's unit type before the first
+  `treatment()` or `variable_value()` on it. Without the unit the holdout
+  cannot be evaluated, and an experiment already exposed that way keeps its
+  decision (so it never publishes a second, conflicting exposure). A `peek()`
+  or `peek_variable_value()` before the unit is set is fine: the decision is
+  made again once the unit arrives.
+
+Holdout ids are integers on the wire. A holdout id sent as a string (`"11"`)
+is ignored here, whereas javascript-sdk coerces it; the Collector never sends
+one.
+
+Payloads without holdouts behave exactly as before.
 
 ### Semantic Version Operators
 
