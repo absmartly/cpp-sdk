@@ -127,6 +127,32 @@ TEST_CASE("Shared variable key: the lowest-id assigned candidate wins", "[contex
     REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW});
 }
 
+TEST_CASE("Shared variable key: an assigned candidate wins even when it is not eligible or mismatches",
+          "[context][shared-variable-key]") {
+    SECTION("traffic-excluded: assigned, not eligible, control value") {
+        auto low = make_exp(1, LOW, {{{KEY, "low-control"}}, {{KEY, "low"}}}, 0);
+        low.trafficSplit = {1.0, 0.0};
+        Context ctx(make_config(), data_of({low, high_exp()}));
+        REQUIRE(ctx.variable_value(KEY, "default") == "low-control");
+        auto event = ctx.publish();
+        REQUIRE(event.exposures.size() == 1);
+        REQUIRE(event.exposures[0].name == LOW);
+        REQUIRE(event.exposures[0].assigned);
+        REQUIRE_FALSE(event.exposures[0].eligible);
+    }
+
+    SECTION("non-strict audience mismatch") {
+        auto low = low_exp();
+        low.audience = json(R"({"filter":[{"eq":[{"var":"country"},{"value":"US"}]}]})");
+        Context ctx(make_config(), data_of({low, high_exp()}));
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        auto event = ctx.publish();
+        REQUIRE(event.exposures.size() == 1);
+        REQUIRE(event.exposures[0].name == LOW);
+        REQUIRE(event.exposures[0].audienceMismatch);
+    }
+}
+
 TEST_CASE("Shared variable key: a winner whose variant lacks the key gives the default",
           "[context][shared-variable-key]") {
     // The low-id experiment is assigned to variant 0, which does not define the key. Its value
