@@ -317,6 +317,10 @@ nlohmann::json show_banner = context.variable_value("show_banner", false);
 nlohmann::json banner_height = context.variable_value("banner_height", 200);
 ```
 
+#### Shared variable keys
+
+When several experiments define the same variable key, the experiments whose variants define it are checked in ascending experiment id order. The first one the user is in (assigned, overridden or rule-assigned) wins, and only that experiment is exposed. If the winner's assigned variant does not define the key, `variable_value()` returns your default rather than trying a later experiment. If the user is in none of them, it returns your default and records no exposure.
+
 ### Peek at Treatment Variants
 
 Although generally not recommended, it is sometimes necessary to peek at a treatment or variable without triggering an exposure. The A/B Smartly SDK provides `peek()` and `peek_variable_value()` methods for that.

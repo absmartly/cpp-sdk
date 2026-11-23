@@ -34,6 +34,23 @@
 
 ### Fixed
 
+- **Shared variable keys exposed experiments the user never saw.** When two or
+  more experiments define the same variable key, `variable_value()` queued an
+  exposure for every candidate it visited on the way to the winner, including
+  experiments the unit was not in (a strict audience mismatch, no unit for the
+  experiment's unit type) and experiments that ended on the caller default.
+  Those users were recorded in experiments that never affected them. Both
+  `variable_value()` and `peek_variable_value()` could also return a value from
+  a later experiment when the winner's assigned arm did not define the key, so
+  the arm a user got decided which experiment they were counted in. This
+  affects anyone with two or more running experiments that share a variable
+  key. The rule now applied, matching the Java SDK: the candidates are the
+  experiments whose variants define the key, by experiment id ascending; the
+  winner is the first one the unit is assigned to, overridden into or
+  rule-assigned to; if the winner's variant does not define the key the caller
+  default is returned and no later experiment is tried; if no candidate
+  qualifies the default is returned. Only the winner is exposed, and
+  `peek_variable_value()` exposes nothing.
 - A matching rule that won over a different custom assignment was treated as
   stale and rebuilt (re-queuing its exposure) on every `treatment()` call.
 
