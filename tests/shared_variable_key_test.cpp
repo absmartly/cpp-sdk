@@ -189,6 +189,8 @@ TEST_CASE("Shared variable key: a custom-assigned candidate wins", "[context][sh
     Context ctx(make_config(), data_of({low, high_exp()}));
     ctx.set_custom_assignment(LOW, 1);
 
+    REQUIRE(ctx.peek_variable_value(KEY, "default") == "low");
+    REQUIRE(ctx.pending() == 0);
     REQUIRE(ctx.variable_value(KEY, "default") == "low");
     auto event = ctx.publish();
     REQUIRE(event.exposures.size() == 1);
