@@ -46,7 +46,8 @@
   affects anyone with two or more running experiments that share a variable
   key. The rule now applied, matching the Java SDK: the candidates are the
   experiments whose variants define the key, by experiment id ascending; the
-  winner is the first one the unit is assigned to, overridden into or
+  winner is the first one the unit is assigned to (including a unit outside the
+  traffic split, which gets the control value), overridden into or
   rule-assigned to; if the winner's variant does not define the key the caller
   default is returned and no later experiment is tried; if no candidate
   qualifies the default is returned. Only the winner is exposed, and

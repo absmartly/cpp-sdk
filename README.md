@@ -319,7 +319,7 @@ nlohmann::json banner_height = context.variable_value("banner_height", 200);
 
 #### Shared variable keys
 
-When several experiments define the same variable key, the experiments whose variants define it are checked in ascending experiment id order. The first one the user is in (assigned, overridden or rule-assigned) wins, and only that experiment is exposed. If the winner's assigned variant does not define the key, `variable_value()` returns your default rather than trying a later experiment. If the user is in none of them, it returns your default and records no exposure.
+When several experiments define the same variable key, the experiments whose variants define it are checked in ascending experiment id order. The first one the user is in (assigned, overridden or rule-assigned) wins, and only that experiment is exposed. A user who is assigned but outside the traffic split still counts: they get the experiment's control (variant 0) value and are exposed to it. If the winner's assigned variant does not define the key, `variable_value()` returns your default rather than trying a later experiment. If the user is in none of them, it returns your default and records no exposure.
 
 ### Peek at Treatment Variants
 

@@ -105,6 +105,20 @@ TEST_CASE("Shared variable key: an unassigned lower-id candidate is skipped with
     REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH});
 }
 
+TEST_CASE("Shared variable key: a losing candidate is still exposed by its own treatment()",
+          "[context][shared-variable-key]") {
+    // Checking a candidate must not mark it exposed, or a later treatment() would skip it.
+    auto low = low_exp();
+    strict_mismatch(low);
+    Context ctx(make_config(), data_of({low, high_exp()}));
+
+    REQUIRE(ctx.variable_value(KEY, "default") == "high");
+    REQUIRE(ctx.pending() == 1);
+    REQUIRE(ctx.treatment(LOW) == 0);
+    REQUIRE(ctx.pending() == 2);
+    REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH, LOW});
+}
+
 TEST_CASE("Shared variable key: the winner's exposure is queued once", "[context][shared-variable-key]") {
     auto low = low_exp();
     strict_mismatch(low);
