@@ -198,6 +198,20 @@ TEST_CASE("Shared variable key: a custom-assigned candidate wins", "[context][sh
     REQUIRE(event.exposures[0].custom);
 }
 
+TEST_CASE("Shared variable key: a custom assignment alone does not make an unassigned candidate win",
+          "[context][shared-variable-key]") {
+    auto low = low_exp();
+    low.fullOnVariant = 0;
+    strict_mismatch(low);
+    Context ctx(make_config(), data_of({low, high_exp()}));
+    ctx.set_custom_assignment(LOW, 1);
+
+    REQUIRE(ctx.peek_variable_value(KEY, "default") == "high");
+    REQUIRE(ctx.pending() == 0);
+    REQUIRE(ctx.variable_value(KEY, "default") == "high");
+    REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH});
+}
+
 TEST_CASE("Shared variable key: a key defined by one experiment exposes only a unit in it",
           "[context][shared-variable-key]") {
     auto low = low_exp();
