@@ -21,7 +21,9 @@
   rule-assigned to; if the winner's variant does not define the key the caller
   default is returned and no later experiment is tried; if no candidate
   qualifies the default is returned. Only the winner is exposed, and
-  `peek_variable_value()` exposes nothing.
+  `peek_variable_value()` exposes nothing. This replaces the earlier rule
+  (shared with the JavaScript SDK) of exposing every candidate checked and
+  falling through to a later experiment when the key was missing.
 
   This also applies when only one experiment defines the key: a unit that is
   not in it (a strict audience mismatch, or no unit for its unit type) gets the
