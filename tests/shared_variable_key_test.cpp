@@ -182,6 +182,33 @@ TEST_CASE("Shared variable key: an assigned candidate wins even when it is not e
     }
 }
 
+TEST_CASE("Shared variable key: a custom-assigned candidate wins", "[context][shared-variable-key]") {
+    auto low = low_exp();
+    low.fullOnVariant = 0;
+    low.split = {1.0, 0.0};
+    Context ctx(make_config(), data_of({low, high_exp()}));
+    ctx.set_custom_assignment(LOW, 1);
+
+    REQUIRE(ctx.variable_value(KEY, "default") == "low");
+    auto event = ctx.publish();
+    REQUIRE(event.exposures.size() == 1);
+    REQUIRE(event.exposures[0].name == LOW);
+    REQUIRE(event.exposures[0].custom);
+}
+
+TEST_CASE("Shared variable key: a key defined by one experiment exposes only a unit in it",
+          "[context][shared-variable-key]") {
+    auto low = low_exp();
+    SECTION("strict audience mismatch") { strict_mismatch(low); }
+    SECTION("no unit for its unit type") { missing_unit(low); }
+
+    Context ctx(make_config(), data_of({low}));
+    REQUIRE(ctx.variable_value(KEY, "default") == "default");
+    REQUIRE(ctx.pending() == 0);
+    ctx.treatment(LOW);
+    REQUIRE(ctx.pending() == 1);
+}
+
 TEST_CASE("Shared variable key: a winner whose variant lacks the key gives the default",
           "[context][shared-variable-key]") {
     // The low-id experiment is assigned to variant 0, which does not define the key. Its value
@@ -279,6 +306,16 @@ TEST_CASE("Shared variable key: assignment rules", "[context][shared-variable-ke
         REQUIRE(event.exposures.size() == 1);
         REQUIRE(event.exposures[0].name == LOW);
         REQUIRE(event.exposures[0].ruleOverride);
+    }
+
+    SECTION("a rule-won winner is exposed once across reads") {
+        auto low = low_exp();
+        strict_mismatch(low);
+        low.assignmentRules = assign_rule_to(1).dump();
+        Context ctx(make_config(), data_of({low, high_exp()}));
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        REQUIRE(ctx.pending() == 1);
     }
 
     SECTION("a rule to an arm without the key gives the default") {

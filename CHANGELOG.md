@@ -23,6 +23,14 @@
   qualifies the default is returned. Only the winner is exposed, and
   `peek_variable_value()` exposes nothing.
 
+  This also applies when only one experiment defines the key: a unit that is
+  not in it (a strict audience mismatch, or no unit for its unit type) gets the
+  default and is no longer exposed by `variable_value()`, so exposure counts
+  for such experiments can drop. `treatment()` still exposes it. An override to
+  a variant the experiment does not have now makes that experiment the winner
+  with the default value and an exposure, instead of falling through to a
+  later experiment's value.
+
 ## 1.0.0 (2026-11-16)
 
 ### Added
