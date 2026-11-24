@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/context.h>
+#include <absmartly/context_data_provider.h>
 
 #include <initializer_list>
 
@@ -87,6 +88,20 @@ static std::vector<std::string> exposed_names(Context& ctx) {
     }
     return names;
 }
+
+class FixedDataProvider : public ContextDataProvider {
+public:
+    explicit FixedDataProvider(ContextData data) : data_(std::move(data)) {}
+
+    std::future<ContextData> get_context_data() override {
+        std::promise<ContextData> promise;
+        promise.set_value(data_);
+        return promise.get_future();
+    }
+
+private:
+    ContextData data_;
+};
 
 static json assign_rule_to(int variant) {
     return {{"rules", json::array({{{"name", "all"}, {"type", "assign"}, {"conditions", nullptr},
@@ -300,5 +315,29 @@ TEST_CASE("Shared variable key: falsy values are values, a missing key is not",
         REQUIRE(ctx.peek_variable_value(KEY, "default") == value);
         REQUIRE(ctx.variable_value(KEY, "default") == value);
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH});
+    }
+}
+
+TEST_CASE("Shared variable key: the winner follows attribute changes and refreshes",
+          "[context][shared-variable-key]") {
+    SECTION("an attribute that matches the strict audience makes the lower-id candidate win") {
+        auto low = low_exp();
+        strict_mismatch(low);
+        Context ctx(make_config(), data_of({low, high_exp()}));
+        REQUIRE(ctx.variable_value(KEY, "default") == "high");
+
+        ctx.set_attribute("country", "US");
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH, LOW});
+    }
+
+    SECTION("a refresh that removes the winner hands the key to the next candidate") {
+        auto provider = std::make_shared<FixedDataProvider>(data_of({high_exp()}));
+        Context ctx(make_config(), data_of({low_exp(), high_exp()}), nullptr, nullptr, provider);
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+
+        ctx.refresh();
+        REQUIRE(ctx.variable_value(KEY, "default") == "high");
+        REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW, HIGH});
     }
 }
