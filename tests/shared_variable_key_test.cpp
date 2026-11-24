@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/context.h>
 #include <absmartly/context_data_provider.h>
+#include <absmartly/context_event_logger.h>
 
 #include <initializer_list>
 
@@ -392,5 +393,31 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
         ctx.refresh();
         REQUIRE(ctx.variable_value(KEY, "default") == "high");
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW, HIGH});
+    }
+
+    SECTION("a logger that refreshes during the winner's exposure does not disturb the read") {
+        // The refresh replaces the experiment data the resolver walked, so the read must not
+        // touch the candidate list after queueing an exposure. The lower-id candidate is checked
+        // first and loses; a resolver that exposed it and kept walking would read freed data.
+        struct RefreshOnExposure : ContextEventLogger {
+            ContextData next;
+            bool refreshed = false;
+            void handle_event(Context& context, const std::string& event_type, const json&) override {
+                if (event_type == "exposure" && !refreshed) {
+                    refreshed = true;
+                    context.refresh(next);
+                }
+            }
+        };
+        auto low = low_exp();
+        strict_mismatch(low);
+        auto logger = std::make_shared<RefreshOnExposure>();
+        logger->next = data_of({high_exp()});
+        Context ctx(make_config(), data_of({low, high_exp()}), logger);
+
+        REQUIRE(ctx.variable_value(KEY, "default") == "high");
+        REQUIRE(logger->refreshed);
+        REQUIRE(ctx.variable_value(KEY, "default") == "high");
+        REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH});
     }
 }
