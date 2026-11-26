@@ -324,13 +324,15 @@ nlohmann::json Context::variable_value(const std::string& key, const nlohmann::j
         return default_value;
     }
 
+    auto value_it = assignment->variables.find(key);
+    nlohmann::json value = value_it != assignment->variables.end() ? value_it->second : default_value;
+
     if (!assignment->exposed) {
         assignment->exposed = true;
         queue_exposure(*experiment_name, *assignment);
     }
 
-    auto value_it = assignment->variables.find(key);
-    return value_it != assignment->variables.end() ? value_it->second : default_value;
+    return value;
 }
 
 nlohmann::json Context::peek_variable_value(const std::string& key, const nlohmann::json& default_value) {
@@ -614,7 +616,8 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
-            if (existing.overridden && existing.variant == overrides_[experiment_name]) {
+            if (existing.overridden && existing.variant == overrides_[experiment_name] &&
+                existing.id != 0) {
                 return existing;
             }
         } else if (experiment == nullptr) {

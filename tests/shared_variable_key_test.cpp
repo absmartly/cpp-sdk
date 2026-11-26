@@ -395,6 +395,18 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW, HIGH});
     }
 
+    SECTION("a cached override binds when its experiment arrives on refresh") {
+        Context ctx(make_config(), data_of({high_exp()}));
+        ctx.set_override(LOW, 1);
+        REQUIRE(ctx.peek_variable_value(KEY, "default") == "high");
+        REQUIRE(ctx.pending() == 0);
+
+        ctx.refresh(data_of({low_exp(), high_exp()}));
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        auto names = exposed_names(ctx);
+        REQUIRE(names == std::vector<std::string>{LOW});
+    }
+
     SECTION("a logger that refreshes during the winner's exposure does not disturb the read") {
         // The refresh replaces the experiment data the resolver walked, so the read must not
         // touch the candidate list after queueing an exposure. The lower-id candidate is checked
@@ -409,15 +421,15 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
                 }
             }
         };
+        auto logger = std::make_shared<RefreshOnExposure>();
+        logger->next = data_of({});
         auto low = low_exp();
         strict_mismatch(low);
-        auto logger = std::make_shared<RefreshOnExposure>();
-        logger->next = data_of({high_exp()});
         Context ctx(make_config(), data_of({low, high_exp()}), logger);
 
         REQUIRE(ctx.variable_value(KEY, "default") == "high");
         REQUIRE(logger->refreshed);
-        REQUIRE(ctx.variable_value(KEY, "default") == "high");
+        REQUIRE(ctx.variable_value(KEY, "default") == "default");
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH});
     }
 }
