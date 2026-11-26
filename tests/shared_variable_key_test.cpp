@@ -44,7 +44,6 @@ static ExperimentData make_exp(int id, const std::string& name, std::initializer
     return exp;
 }
 
-// The low-id candidate defines the key in variant 1 only; the high-id one in variant 1 only.
 static ExperimentData low_exp(int full_on_variant = 1) {
     return make_exp(1, LOW, {nullptr, {{KEY, "low"}}}, full_on_variant);
 }
@@ -53,13 +52,11 @@ static ExperimentData high_exp(int full_on_variant = 1) {
     return make_exp(2, HIGH, {nullptr, {{KEY, "high"}}}, full_on_variant);
 }
 
-// Not assigned: a strict audience the unit does not match.
 static void strict_mismatch(ExperimentData& exp) {
     exp.audienceStrict = true;
     exp.audience = json(R"({"filter":[{"eq":[{"var":"country"},{"value":"US"}]}]})");
 }
 
-// Not assigned: the unit type has no unit, and the experiment is not full-on.
 static void missing_unit(ExperimentData& exp) {
     exp.unitType = "device_id";
     exp.fullOnVariant = 0;
@@ -135,13 +132,25 @@ TEST_CASE("Shared variable key: a losing candidate is still exposed by its own t
     REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH, LOW});
 }
 
-TEST_CASE("Shared variable key: an override on an experiment that is not loaded is exposed once",
+TEST_CASE("Shared variable key: an override on an experiment that is not loaded is exposed once by treatment()",
           "[context][shared-variable-key]") {
     Context ctx(make_config(), data_of({high_exp()}));
     ctx.set_override("not_running", 1);
 
     for (int i = 0; i < 5; ++i) {
         REQUIRE(ctx.treatment("not_running") == 1);
+    }
+    REQUIRE(ctx.pending() == 1);
+}
+
+TEST_CASE("Shared variable key: an overridden winner with experiment id 0 is exposed once",
+          "[context][shared-variable-key]") {
+    Context ctx(make_config(), data_of({make_exp(0, "exp_zero", {nullptr, {{KEY, "zero"}}}, 1)}));
+    ctx.set_override("exp_zero", 1);
+
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(ctx.treatment("exp_zero") == 1);
+        REQUIRE(ctx.variable_value(KEY, "default") == "zero");
     }
     REQUIRE(ctx.pending() == 1);
 }
