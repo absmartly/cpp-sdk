@@ -31,7 +31,9 @@
   for such experiments can drop. `treatment()` still exposes it. An override to
   a variant the experiment does not have now makes that experiment the winner
   with the default value and an exposure, instead of falling through to a
-  later experiment's value.
+  later experiment's value. An override set before its experiment is loaded
+  now binds to that experiment once a refresh brings it in, so the value and
+  the exposure (id, unit type) come from the loaded experiment.
 
 ## 1.0.0 (2026-11-16)
 

@@ -616,8 +616,10 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
-            if (existing.overridden && existing.variant == overrides_[experiment_name] &&
-                existing.id != 0) {
+            // An override cached before its experiment arrived has no experiment data; rebuild
+            // it once the experiment is loaded so its value and exposure use that data.
+            bool unbound = experiment != nullptr && existing.id == 0 && experiment->data->id != 0;
+            if (existing.overridden && existing.variant == overrides_[experiment_name] && !unbound) {
                 return existing;
             }
         } else if (experiment == nullptr) {

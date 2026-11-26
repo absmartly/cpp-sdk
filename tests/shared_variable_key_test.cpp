@@ -135,6 +135,50 @@ TEST_CASE("Shared variable key: a losing candidate is still exposed by its own t
     REQUIRE(exposed_names(ctx) == std::vector<std::string>{HIGH, LOW});
 }
 
+TEST_CASE("Shared variable key: an override on an experiment that is not loaded is exposed once",
+          "[context][shared-variable-key]") {
+    Context ctx(make_config(), data_of({high_exp()}));
+    ctx.set_override("not_running", 1);
+
+    for (int i = 0; i < 5; ++i) {
+        REQUIRE(ctx.treatment("not_running") == 1);
+    }
+    REQUIRE(ctx.pending() == 1);
+}
+
+TEST_CASE("Shared variable key: a candidate exposed by its own treatment() does not win",
+          "[context][shared-variable-key]") {
+    auto low = low_exp();
+    strict_mismatch(low);
+    Context ctx(make_config(), data_of({low, high_exp()}));
+
+    ctx.treatment(LOW);
+    REQUIRE(ctx.variable_value(KEY, "default") == "high");
+    REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW, HIGH});
+}
+
+TEST_CASE("Shared variable key: the value is read before the exposure logger runs",
+          "[context][shared-variable-key]") {
+    // A synchronous logger can re-resolve the winner; the read returns the value of the
+    // assignment it exposed, not the one the logger left behind.
+    struct OverrideOnExposure : ContextEventLogger {
+        bool done = false;
+        void handle_event(Context& context, const std::string& event_type, const json&) override {
+            if (event_type == "exposure" && !done) {
+                done = true;
+                context.set_override(HIGH, 0);
+                context.peek(HIGH);
+            }
+        }
+    };
+    auto logger = std::make_shared<OverrideOnExposure>();
+    Context ctx(make_config(), data_of({high_exp()}), logger);
+
+    REQUIRE(ctx.variable_value(KEY, "default") == "high");
+    REQUIRE(logger->done);
+    REQUIRE(ctx.peek_variable_value(KEY, "default") == "default");
+}
+
 TEST_CASE("Shared variable key: the winner's exposure is queued once", "[context][shared-variable-key]") {
     auto low = low_exp();
     strict_mismatch(low);
@@ -395,16 +439,18 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW, HIGH});
     }
 
-    SECTION("a cached override binds when its experiment arrives on refresh") {
+    SECTION("an override cached before its experiment arrives binds to it on refresh") {
         Context ctx(make_config(), data_of({high_exp()}));
         ctx.set_override(LOW, 1);
-        REQUIRE(ctx.peek_variable_value(KEY, "default") == "high");
-        REQUIRE(ctx.pending() == 0);
+        ctx.treatment(LOW);
 
         ctx.refresh(data_of({low_exp(), high_exp()}));
         REQUIRE(ctx.variable_value(KEY, "default") == "low");
-        auto names = exposed_names(ctx);
-        REQUIRE(names == std::vector<std::string>{LOW});
+        auto event = ctx.publish();
+        REQUIRE(event.exposures.size() == 2);
+        REQUIRE(event.exposures[1].name == LOW);
+        REQUIRE(event.exposures[1].id == 1);
+        REQUIRE(event.exposures[1].unit == "session_id");
     }
 
     SECTION("a logger that refreshes during the winner's exposure does not disturb the read") {
