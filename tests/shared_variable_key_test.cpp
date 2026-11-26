@@ -1,6 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
 #include <absmartly/context.h>
-#include <absmartly/context_data_provider.h>
 #include <absmartly/context_event_logger.h>
 
 #include <initializer_list>
@@ -86,20 +85,6 @@ static std::vector<std::string> exposed_names(Context& ctx) {
     }
     return names;
 }
-
-class FixedDataProvider : public ContextDataProvider {
-public:
-    explicit FixedDataProvider(ContextData data) : data_(std::move(data)) {}
-
-    std::future<ContextData> get_context_data() override {
-        std::promise<ContextData> promise;
-        promise.set_value(data_);
-        return promise.get_future();
-    }
-
-private:
-    ContextData data_;
-};
 
 static json assign_rule_to(int variant) {
     return {{"rules", json::array({{{"name", "all"}, {"type", "assign"}, {"conditions", nullptr},
@@ -439,11 +424,10 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
     }
 
     SECTION("a refresh that removes the winner hands the key to the next candidate") {
-        auto provider = std::make_shared<FixedDataProvider>(data_of({high_exp()}));
-        Context ctx(make_config(), data_of({low_exp(), high_exp()}), nullptr, nullptr, provider);
+        Context ctx(make_config(), data_of({low_exp(), high_exp()}));
         REQUIRE(ctx.variable_value(KEY, "default") == "low");
 
-        ctx.refresh();
+        ctx.refresh(data_of({high_exp()}));
         REQUIRE(ctx.variable_value(KEY, "default") == "high");
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW, HIGH});
     }
