@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <absmartly/context.h>
 #include <absmartly/context_event_logger.h>
 
@@ -138,6 +139,26 @@ TEST_CASE("Shared variable key: an overridden winner with experiment id 0 is exp
         REQUIRE(ctx.variable_value(KEY, "default") == "zero");
     }
     REQUIRE(ctx.pending() == 1);
+}
+
+TEST_CASE("Shared variable key: treatment() returns the variant it exposed when the logger overrides",
+          "[context][shared-variable-key]") {
+    struct OverrideOnExposure : ContextEventLogger {
+        bool done = false;
+        void handle_event(Context& context, const std::string& event_type, const json&) override {
+            if (event_type == "exposure" && !done) {
+                done = true;
+                context.set_override(HIGH, 0);
+                context.peek(HIGH);
+            }
+        }
+    };
+    auto logger = std::make_shared<OverrideOnExposure>();
+    Context ctx(make_config(), data_of({high_exp()}), logger);
+
+    REQUIRE(ctx.treatment(HIGH) == 1);
+    REQUIRE(logger->done);
+    REQUIRE(ctx.peek(HIGH) == 0);
 }
 
 TEST_CASE("Shared variable key: a candidate exposed by its own treatment() does not win",
@@ -433,16 +454,21 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
     }
 
     SECTION("an override cached before its experiment arrives binds to it on refresh") {
+        // Experiment id 0 is valid, so binding must not depend on the id.
+        int id = GENERATE(1, 0);
+        auto low = make_exp(id, LOW, {nullptr, {{KEY, "low"}}}, 1);
+        low.iteration = 3;
         Context ctx(make_config(), data_of({high_exp()}));
         ctx.set_override(LOW, 1);
         ctx.treatment(LOW);
 
-        ctx.refresh(data_of({low_exp(), high_exp()}));
+        ctx.refresh(data_of({low, high_exp()}));
         REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        REQUIRE(ctx.treatment(LOW) == 1);
         auto event = ctx.publish();
         REQUIRE(event.exposures.size() == 2);
         REQUIRE(event.exposures[1].name == LOW);
-        REQUIRE(event.exposures[1].id == 1);
+        REQUIRE(event.exposures[1].id == id);
         REQUIRE(event.exposures[1].unit == "session_id");
     }
 

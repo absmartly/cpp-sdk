@@ -277,13 +277,15 @@ int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
 
     auto& assignment = get_or_create_assignment(experiment_name);
+    // Read before the exposure logger runs: it may refresh or override, replacing this entry.
+    int variant = assignment.variant;
 
     if (!assignment.exposed) {
         assignment.exposed = true;
         queue_exposure(experiment_name, assignment);
     }
 
-    return assignment.variant;
+    return variant;
 }
 
 int Context::peek(const std::string& experiment_name) {
@@ -592,8 +594,22 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
+    // An override cached while its experiment was not loaded holds no experiment data, so it
+    // is dropped when the experiment arrives and the next read binds it to that data.
+    std::vector<std::string> unbound_overrides;
+    for (const auto& [name, assignment] : assignments_) {
+        if (assignment.overridden && index_.count(name) == 0) {
+            unbound_overrides.push_back(name);
+        }
+    }
+
     data_ = new_data;
     build_index();
+    for (const auto& name : unbound_overrides) {
+        if (index_.count(name) > 0) {
+            assignments_.erase(name);
+        }
+    }
     hashes_.clear();
     assigners_.clear();
 
@@ -616,10 +632,7 @@ Assignment& Context::get_or_create_assignment(const std::string& experiment_name
     if (ass_it != assignments_.end()) {
         auto& existing = ass_it->second;
         if (has_override) {
-            // An override cached before its experiment arrived has no experiment data; rebuild
-            // it once the experiment is loaded so its value and exposure use that data.
-            bool unbound = experiment != nullptr && existing.id == 0 && experiment->data->id != 0;
-            if (existing.overridden && existing.variant == overrides_[experiment_name] && !unbound) {
+            if (existing.overridden && existing.variant == overrides_[experiment_name]) {
                 return existing;
             }
         } else if (experiment == nullptr) {
