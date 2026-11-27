@@ -35,7 +35,8 @@
   now binds to that experiment once a refresh brings it in, so the value and
   the exposure (id, unit type) come from the loaded experiment, whatever its
   id; if it was already exposed before the refresh, it is exposed once more
-  with that data. `variable_value()` and `treatment()` return the value and
+  with that data. An override already bound to an experiment that leaves and
+  returns unchanged is not exposed again. `variable_value()` and `treatment()` return the value and
   variant they exposed even when an exposure event handler changes overrides
   or refreshes the context.
 

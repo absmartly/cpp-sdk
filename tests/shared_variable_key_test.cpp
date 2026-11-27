@@ -472,6 +472,63 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
         REQUIRE(event.exposures[1].unit == "session_id");
     }
 
+    SECTION("an override on an experiment that stays unloaded across refreshes is exposed once") {
+        Context ctx(make_config(), data_of({high_exp()}));
+        ctx.set_override(LOW, 1);
+        ctx.treatment(LOW);
+        ctx.refresh(data_of({high_exp()}));
+        ctx.treatment(LOW);
+        ctx.refresh(data_of({high_exp()}));
+        ctx.treatment(LOW);
+        REQUIRE(ctx.pending() == 1);
+    }
+
+    SECTION("a bound override whose experiment leaves and returns unchanged is not exposed again") {
+        Context ctx(make_config(), data_of({low_exp(), high_exp()}));
+        ctx.set_override(LOW, 1);
+        REQUIRE(ctx.treatment(LOW) == 1);
+        ctx.refresh(data_of({high_exp()}));
+        ctx.treatment(LOW);
+        ctx.refresh(data_of({low_exp(), high_exp()}));
+        REQUIRE(ctx.treatment(LOW) == 1);
+        REQUIRE(ctx.variable_value(KEY, "default") == "low");
+        REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW});
+    }
+
+    SECTION("a bound override whose experiment returns changed binds to the new data") {
+        auto returned = low_exp();
+        int field = GENERATE(0, 1, 2);
+        if (field == 0) returned.id = 7;
+        if (field == 1) returned.iteration = 4;
+        if (field == 2) returned.unitType = "user_id";
+        auto config = make_config();
+        config.units["user_id"] = "u1";
+        Context ctx(config, data_of({low_exp(), high_exp()}));
+        ctx.set_override(LOW, 1);
+        ctx.treatment(LOW);
+        ctx.refresh(data_of({high_exp()}));
+        ctx.refresh(data_of({returned, high_exp()}));
+
+        REQUIRE(ctx.treatment(LOW) == 1);
+        auto event = ctx.publish();
+        REQUIRE(event.exposures.size() == 2);
+        REQUIRE(event.exposures[1].id == returned.id);
+        REQUIRE(event.exposures[1].unit == returned.unitType);
+    }
+
+    SECTION("an override cached before load binds when only the variant variables differ") {
+        // Id 0, no unit type and iteration 0 match the placeholder's empty experiment data.
+        auto zero = make_exp(0, "exp_zero", {nullptr, {{KEY, "zero"}}}, 1);
+        zero.unitType = "";
+        zero.iteration = 0;
+        Context ctx(make_config(), data_of({high_exp()}));
+        ctx.set_override("exp_zero", 1);
+        ctx.treatment("exp_zero");
+
+        ctx.refresh(data_of({zero}));
+        REQUIRE(ctx.variable_value(KEY, "default") == "zero");
+    }
+
     SECTION("a logger that refreshes during the winner's exposure does not disturb the read") {
         // The refresh replaces the experiment data the resolver walked, so the read must not
         // touch the candidate list after queueing an exposure. The lower-id candidate is checked

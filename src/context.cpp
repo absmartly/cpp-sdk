@@ -594,19 +594,29 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
-    // An override cached while its experiment was not loaded holds no experiment data, so it
-    // is dropped when the experiment arrives and the next read binds it to that data.
-    std::vector<std::string> unbound_overrides;
+    // An override cached while its experiment was not loaded holds no experiment data, so when
+    // the experiment arrives it is dropped and the next read binds it to that data. One already
+    // bound to the same experiment data is kept, so it is not exposed again.
+    std::vector<std::string> unloaded_overrides;
     for (const auto& [name, assignment] : assignments_) {
         if (assignment.overridden && index_.count(name) == 0) {
-            unbound_overrides.push_back(name);
+            unloaded_overrides.push_back(name);
         }
     }
 
     data_ = new_data;
     build_index();
-    for (const auto& name : unbound_overrides) {
-        if (index_.count(name) > 0) {
+    for (const auto& name : unloaded_overrides) {
+        auto exp_it = index_.find(name);
+        if (exp_it == index_.end()) {
+            continue;
+        }
+        const auto& existing = assignments_[name];
+        const auto& exp_data = *exp_it->second.data;
+        bool variant_has_variables = existing.variant >= 0 &&
+            static_cast<size_t>(existing.variant) < exp_it->second.variables.size();
+        if (existing.id != exp_data.id || existing.unit_type != exp_data.unitType ||
+            existing.iteration != exp_data.iteration || existing.has_variables != variant_has_variables) {
             assignments_.erase(name);
         }
     }
