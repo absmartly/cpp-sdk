@@ -495,6 +495,16 @@ TEST_CASE("Shared variable key: the winner follows attribute changes and refresh
         REQUIRE(exposed_names(ctx) == std::vector<std::string>{LOW});
     }
 
+    SECTION("an override to a variant one past the last that leaves and returns is not exposed again") {
+        Context ctx(make_config(), data_of({low_exp(), high_exp()}));
+        ctx.set_override(LOW, 2);
+        REQUIRE(ctx.treatment(LOW) == 2);
+        ctx.refresh(data_of({high_exp()}));
+        ctx.refresh(data_of({low_exp(), high_exp()}));
+        REQUIRE(ctx.treatment(LOW) == 2);
+        REQUIRE(ctx.pending() == 1);
+    }
+
     SECTION("a bound override whose experiment returns changed binds to the new data") {
         auto returned = low_exp();
         int field = GENERATE(0, 1, 2);
