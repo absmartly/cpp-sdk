@@ -277,13 +277,15 @@ int Context::treatment(const std::string& experiment_name) {
     check_ready(true);
 
     auto& assignment = get_or_create_assignment(experiment_name);
+    // Read before the exposure logger runs: it may refresh or override, replacing this entry.
+    int variant = assignment.variant;
 
     if (!assignment.exposed) {
         assignment.exposed = true;
         queue_exposure(experiment_name, assignment);
     }
 
-    return assignment.variant;
+    return variant;
 }
 
 int Context::peek(const std::string& experiment_name) {
@@ -293,54 +295,58 @@ int Context::peek(const std::string& experiment_name) {
     return assignment.variant;
 }
 
-nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
-    check_ready(true);
-
+// The candidates for a key are the experiments whose variants define it, by id ascending. The
+// first one the unit is in (assigned, overridden or rule-assigned) wins, and only it is exposed:
+// a candidate that was checked but lost was never seen by the user. If the winner's variant does
+// not define the key the caller default applies; later candidates are not tried, or the arm the
+// unit got would decide which experiment it is counted in. Matches the Java SDK's
+// Context.getVariableAssignment.
+std::pair<const std::string*, Assignment*> Context::variable_assignment(const std::string& key) {
     auto var_it = index_variables_.find(key);
     if (var_it == index_variables_.end()) {
-        return default_value;
+        return {nullptr, nullptr};
     }
 
     for (const auto* experiment_index : var_it->second) {
         const std::string& experiment_name = experiment_index->data->name;
         auto& assignment = get_or_create_assignment(experiment_name);
-
-        if (assignment.has_variables) {
-            if (!assignment.exposed) {
-                assignment.exposed = true;
-                queue_exposure(experiment_name, assignment);
-            }
-
-            if ((assignment.assigned || assignment.overridden || assignment.rule_override) &&
-                assignment.variables.count(key) > 0) {
-                return assignment.variables.at(key);
-            }
+        if (assignment.assigned || assignment.overridden || assignment.rule_override) {
+            return {&experiment_name, &assignment};
         }
     }
 
-    return default_value;
+    return {nullptr, nullptr};
+}
+
+nlohmann::json Context::variable_value(const std::string& key, const nlohmann::json& default_value) {
+    check_ready(true);
+
+    auto [experiment_name, assignment] = variable_assignment(key);
+    if (assignment == nullptr) {
+        return default_value;
+    }
+
+    auto value_it = assignment->variables.find(key);
+    nlohmann::json value = value_it != assignment->variables.end() ? value_it->second : default_value;
+
+    if (!assignment->exposed) {
+        assignment->exposed = true;
+        queue_exposure(*experiment_name, *assignment);
+    }
+
+    return value;
 }
 
 nlohmann::json Context::peek_variable_value(const std::string& key, const nlohmann::json& default_value) {
     check_ready(true);
 
-    auto var_it = index_variables_.find(key);
-    if (var_it == index_variables_.end()) {
+    const auto* assignment = variable_assignment(key).second;
+    if (assignment == nullptr) {
         return default_value;
     }
 
-    for (const auto* experiment_index : var_it->second) {
-        const std::string& experiment_name = experiment_index->data->name;
-        auto& assignment = get_or_create_assignment(experiment_name);
-
-        if (assignment.has_variables &&
-            (assignment.assigned || assignment.overridden || assignment.rule_override) &&
-            assignment.variables.count(key) > 0) {
-            return assignment.variables.at(key);
-        }
-    }
-
-    return default_value;
+    auto value_it = assignment->variables.find(key);
+    return value_it != assignment->variables.end() ? value_it->second : default_value;
 }
 
 std::map<std::string, std::vector<std::string>> Context::variable_keys() {
@@ -588,8 +594,32 @@ void Context::refresh(const ContextData& new_data) {
     // Cached assignments are kept (sticky): get_or_create_assignment() decides
     // per experiment whether a cached one is still valid against the new data.
     // An override stays valid while its variant is unchanged, as in JS.
+    // An override cached while its experiment was not loaded holds no experiment data, so when
+    // the experiment arrives it is dropped and the next read binds it to that data. One already
+    // bound to the same experiment data is kept, so it is not exposed again.
+    std::vector<std::string> unloaded_overrides;
+    for (const auto& [name, assignment] : assignments_) {
+        if (assignment.overridden && index_.count(name) == 0) {
+            unloaded_overrides.push_back(name);
+        }
+    }
+
     data_ = new_data;
     build_index();
+    for (const auto& name : unloaded_overrides) {
+        auto exp_it = index_.find(name);
+        if (exp_it == index_.end()) {
+            continue;
+        }
+        const auto& existing = assignments_[name];
+        const auto& exp_data = *exp_it->second.data;
+        bool variant_has_variables = existing.variant >= 0 &&
+            static_cast<size_t>(existing.variant) < exp_it->second.variables.size();
+        if (existing.id != exp_data.id || existing.unit_type != exp_data.unitType ||
+            existing.iteration != exp_data.iteration || existing.has_variables != variant_has_variables) {
+            assignments_.erase(name);
+        }
+    }
     hashes_.clear();
     assigners_.clear();
 

@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Shared variable keys exposed experiments the user never saw.** When two or
+  more experiments define the same variable key, `variable_value()` queued an
+  exposure for every candidate it visited on the way to the winner, including
+  experiments the unit was not in (a strict audience mismatch, no unit for the
+  experiment's unit type) and experiments that ended on the caller default.
+  Those users were recorded in experiments that never affected them. Both
+  `variable_value()` and `peek_variable_value()` could also return a value from
+  a later experiment when the winner's assigned arm did not define the key, so
+  the arm a user got decided which experiment they were counted in. This
+  affects anyone with two or more running experiments that share a variable
+  key. The rule now applied, matching the Java SDK: the candidates are the
+  experiments whose variants define the key, by experiment id ascending; the
+  winner is the first one the unit is assigned to (including a unit outside the
+  traffic split, which gets the control value), overridden into or
+  rule-assigned to; if the winner's variant does not define the key the caller
+  default is returned and no later experiment is tried; if no candidate
+  qualifies the default is returned. Only the winner is exposed, and
+  `peek_variable_value()` exposes nothing. This replaces the earlier rule
+  (shared with the JavaScript SDK) of exposing every candidate checked and
+  falling through to a later experiment when the key was missing.
+
+  This also applies when only one experiment defines the key: a unit that is
+  not in it (a strict audience mismatch, or no unit for its unit type) gets the
+  default and is no longer exposed by `variable_value()`, so exposure counts
+  for such experiments can drop. `treatment()` still exposes it. An override to
+  a variant the experiment does not have now makes that experiment the winner
+  with the default value and an exposure, instead of falling through to a
+  later experiment's value. An override set before its experiment is loaded
+  now binds to that experiment once a refresh brings it in, so the value and
+  the exposure (id, unit type) come from the loaded experiment, whatever its
+  id; if it was already exposed before the refresh, it is exposed once more
+  with that data. An override already bound to an experiment that leaves and
+  returns unchanged is not exposed again. `variable_value()` and `treatment()`
+  return the value and variant they exposed even when an exposure event
+  handler changes overrides or refreshes the context.
+
+## 1.0.0 (2026-11-16)
+
 ### Added
 
 - Ordered assignment rules (`ExperimentData::assignmentRules`). The first

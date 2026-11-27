@@ -15,6 +15,7 @@
 #include <string>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <future>
 
 namespace absmartly {
@@ -132,6 +133,7 @@ private:
     friend struct ContextTestAccess;
 
     Assignment& get_or_create_assignment(const std::string& experiment_name);
+    std::pair<const std::string*, Assignment*> variable_assignment(const std::string& key);
     void queue_exposure(const std::string& experiment_name, const Assignment& assignment);
 
     void build_index();

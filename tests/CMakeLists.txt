@@ -17,6 +17,7 @@ add_executable(absmartly_tests
   system_attributes_test.cpp
   assignment_rules_test.cpp
   http_integration_test.cpp
+  shared_variable_key_test.cpp
 )
 
 target_link_libraries(absmartly_tests PRIVATE absmartly-sdk Catch2::Catch2WithMain)
